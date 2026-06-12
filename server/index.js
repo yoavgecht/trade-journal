@@ -149,6 +149,33 @@ app.delete('/api/trades/:id/screenshots/:name', (req, res) => {
   res.json({ screenshots: shots.filter((s) => s !== name) });
 });
 
+// --- manual daily P&L entries (days without per-trade data) -------------------
+app.get('/api/days', (req, res) => {
+  const id = journalId(req, res);
+  if (id) res.json(db.prepare('SELECT date, pnl, trades, note FROM manual_days WHERE journal_id = ? ORDER BY date').all(id));
+});
+
+app.put('/api/days/:date', (req, res) => {
+  const id = journalId(req, res);
+  if (!id) return;
+  const date = req.params.date;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'bad date' });
+  const { pnl, trades = null, note = null } = req.body || {};
+  if (typeof pnl !== 'number' || Number.isNaN(pnl)) return res.status(400).json({ error: 'pnl (number) required' });
+  db.prepare(`
+    INSERT INTO manual_days (journal_id, date, pnl, trades, note) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(journal_id, date) DO UPDATE SET pnl = excluded.pnl, trades = excluded.trades, note = excluded.note
+  `).run(id, date, pnl, trades, note);
+  res.json({ ok: true });
+});
+
+app.delete('/api/days/:date', (req, res) => {
+  const id = journalId(req, res);
+  if (!id) return;
+  db.prepare('DELETE FROM manual_days WHERE journal_id = ? AND date = ?').run(id, req.params.date);
+  res.json({ ok: true });
+});
+
 // --- products (global: NQ/ES + micros) ----------------------------------------
 app.get('/api/products', (_req, res) => res.json(productMap()));
 app.patch('/api/products', (req, res) => {
@@ -166,6 +193,7 @@ app.post('/api/reset', (req, res) => {
   db.prepare('DELETE FROM trade_meta WHERE trade_id IN (SELECT id FROM trades WHERE journal_id = ?)').run(id);
   db.prepare('DELETE FROM trades WHERE journal_id = ?').run(id);
   db.prepare('DELETE FROM fills WHERE journal_id = ?').run(id);
+  db.prepare('DELETE FROM manual_days WHERE journal_id = ?').run(id);
   res.json({ ok: true });
 });
 

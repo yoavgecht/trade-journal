@@ -128,7 +128,7 @@ function ProfitCalendar({ equity, conv, onDayClick }) {
           const out = d.getMonth() !== month - 1;
           const today = key(d) === new Date().toISOString().slice(0, 10);
           const cls = data ? (data.pnl >= 0 ? 'green' : 'red') : '';
-          const clickable = data && !out;
+          const clickable = !out; // any in-month day: review trades or type in a manual P&L
           return (
             <div key={i} className={`cal-cell ${cls} ${out ? 'out' : ''} ${today ? 'today' : ''} ${clickable ? 'clickable' : ''}`}
               onClick={clickable ? () => onDayClick(key(d)) : undefined}
@@ -157,14 +157,19 @@ function ProfitCalendar({ equity, conv, onDayClick }) {
 
 export default function Overview({ dataVersion, journal, onOpenImport }) {
   const [d, setD] = useState(null);
+  const [risk, setRisk] = useState(null);
   const [unit, setUnit] = useState('usd');
   const [reviewDay, setReviewDay] = useState(null);
+  const [localV, setLocalV] = useState(0); // bumped by DayPanel edits
   const navigate = useNavigate();
 
-  useEffect(() => { api('/dashboard').then(setD); }, [dataVersion]);
+  useEffect(() => {
+    api('/dashboard').then(setD);
+    api('/risk').then(setRisk);
+  }, [dataVersion, localV]);
 
   if (!d) return null;
-  const empty = d.trades === 0;
+  const empty = d.trades === 0 && d.equity.length === 0;
   const ratio = d.avgLoss !== 0 ? Math.abs(d.avgWin / d.avgLoss) : null;
   const pfFill = d.profitFactor == null ? 0 : Math.min(8, Math.round(d.profitFactor * 2.5));
   const scoreColor = d.score >= 75 ? 'var(--green)' : d.score >= 45 ? '#f59e0b' : 'var(--red)';
@@ -254,6 +259,32 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
             </div>
           </div>
 
+          {/* Trading growth curve — balance vs the minimum-balance (trailing
+              drawdown) line, like the prop firm's analytics page. */}
+          {risk && risk.series.length > 0 && (
+            <div className="panel" style={{ marginBottom: 14 }}>
+              <h2>Trading Growth Curve <span className="muted" style={{ textTransform: 'none', fontWeight: 500 }}>
+                — distance to blowout: <b className={risk.distance < risk.trailingDd * 0.35 ? 'neg' : 'pos'}>{money(risk.distance)}</b>
+              </span></h2>
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={risk.series}>
+                  <defs>
+                    <linearGradient id="growfill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#d4a017" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#d4a017" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+                  <XAxis dataKey="date" stroke="#6b7280" fontSize={10} />
+                  <YAxis stroke="#6b7280" fontSize={11} domain={['auto', 'auto']} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v) => money(v)} />
+                  <Area type="monotone" dataKey="balance" name="Balance" stroke="#d4a017" strokeWidth={2.5} fill="url(#growfill)" dot={false} />
+                  <Area type="stepAfter" dataKey="threshold" name="Minimum Balance" stroke="#dc2626" strokeWidth={2} strokeDasharray="5 3" fill="none" dot={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           {/* Calendar + evaluation */}
           <div className="grid" style={{ gridTemplateColumns: '2fr 1fr', marginBottom: 14, alignItems: 'start' }}>
             <ProfitCalendar equity={d.equity} conv={conv} onDayClick={setReviewDay} />
@@ -331,7 +362,7 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
           </div>
         </>
       )}
-      {reviewDay && <DayPanel date={reviewDay} onClose={() => setReviewDay(null)} />}
+      {reviewDay && <DayPanel date={reviewDay} onClose={() => setReviewDay(null)} onChanged={() => setLocalV((v) => v + 1)} />}
     </>
   );
 }

@@ -75,6 +75,15 @@ CREATE TABLE IF NOT EXISTS trade_meta (
   screenshots TEXT          -- JSON array of filenames in screenshots/ (max 2)
 );
 
+CREATE TABLE IF NOT EXISTS manual_days (
+  journal_id INTEGER NOT NULL REFERENCES journals(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,       -- YYYY-MM-DD
+  pnl REAL NOT NULL,
+  trades INTEGER,           -- count only (no per-trade detail)
+  note TEXT,
+  PRIMARY KEY (journal_id, date)
+);
+
 CREATE TABLE IF NOT EXISTS products (
   symbol TEXT PRIMARY KEY,
   point_value REAL NOT NULL,

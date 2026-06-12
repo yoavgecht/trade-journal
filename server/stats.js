@@ -51,6 +51,14 @@ export function equity(journalId) {
     (daily[d] ??= { date: d, pnl: 0, trades: 0 });
     daily[d].pnl += t.pnl; daily[d].trades++;
   }
+  // Manual daily entries (days journaled without per-trade data — e.g. typed
+  // in from a prop firm's dashboard) merge into the same series.
+  for (const m of db.prepare('SELECT date, pnl, trades FROM manual_days WHERE journal_id = ?').all(journalId)) {
+    (daily[m.date] ??= { date: m.date, pnl: 0, trades: 0 });
+    daily[m.date].pnl += m.pnl;
+    daily[m.date].trades += m.trades || 0;
+    daily[m.date].manual = true;
+  }
   const days = Object.values(daily).sort((a, b) => a.date.localeCompare(b.date));
   let cum = 0;
   for (const d of days) { cum += d.pnl; d.pnl = r2(d.pnl); d.cum = r2(cum); }
@@ -221,6 +229,10 @@ export function dashboard(journalId) {
   const greenDays = eq.filter((d) => d.pnl > 0).length;
   const redDays = eq.filter((d) => d.pnl < 0).length;
 
+  // Net P&L includes manual days (equity is the source of truth for money);
+  // per-trade stats (winrate, PF, streaks…) stay trade-based.
+  const totalAll = eq.length ? eq[eq.length - 1].cum : 0;
+
   const last5 = trades.slice(-5).map((t) => (t.pnl > BE ? 'W' : t.pnl < -BE ? 'L' : 'B'));
 
   // Discipline score 0-100: start perfect, lose points for the patterns that
@@ -252,6 +264,7 @@ export function dashboard(journalId) {
 
   return {
     ...sum,
+    totalPnl: r2(totalAll),
     startBalance: start,
     equity: eq,
     byDow: pat.byDow,
@@ -260,8 +273,8 @@ export function dashboard(journalId) {
     biggestWin: trades.length ? r2(Math.max(...trades.map((t) => t.pnl))) : null,
     biggestLoss: trades.length ? r2(Math.min(...trades.map((t) => t.pnl))) : null,
     avgHoldS: avgHoldS == null ? null : Math.round(avgHoldS),
-    avgProfitPerDay: eq.length ? r2(sum.totalPnl / eq.length) : null,
-    roiPct: start > 0 ? r2((sum.totalPnl / start) * 100) : null,
+    avgProfitPerDay: eq.length ? r2(totalAll / eq.length) : null,
+    roiPct: start > 0 ? r2((totalAll / start) * 100) : null,
     maxDdPct: r2(maxDdPct),
     greenDays,
     redDays,
