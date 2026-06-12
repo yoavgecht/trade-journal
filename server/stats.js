@@ -1,0 +1,196 @@
+// Aggregations the dashboard reads. Everything derives from the trades table;
+// "day" means the trade's EXIT date (when P&L was realized).
+import { db, getSettings } from './db.js';
+
+const allTrades = () =>
+  db.prepare('SELECT * FROM trades WHERE exit_time IS NOT NULL ORDER BY exit_time').all();
+
+const day = (iso) => (iso || '').slice(0, 10);
+
+export function summary() {
+  const trades = allTrades();
+  const wins = trades.filter((t) => t.pnl > 0);
+  const losses = trades.filter((t) => t.pnl < 0);
+  const grossWin = wins.reduce((s, t) => s + t.pnl, 0);
+  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+  const total = trades.reduce((s, t) => s + t.pnl, 0);
+
+  // Longest win/loss streaks
+  let curW = 0, curL = 0, maxW = 0, maxL = 0;
+  for (const t of trades) {
+    if (t.pnl > 0) { curW++; curL = 0; } else if (t.pnl < 0) { curL++; curW = 0; }
+    maxW = Math.max(maxW, curW); maxL = Math.max(maxL, curL);
+  }
+
+  const byProduct = {};
+  for (const t of trades) {
+    const p = (byProduct[t.product] ??= { trades: 0, pnl: 0, wins: 0 });
+    p.trades++; p.pnl += t.pnl; if (t.pnl > 0) p.wins++;
+  }
+
+  return {
+    trades: trades.length,
+    totalPnl: r2(total),
+    winRate: trades.length ? r2((wins.length / trades.length) * 100) : 0,
+    profitFactor: grossLoss > 0 ? r2(grossWin / grossLoss) : null,
+    expectancy: trades.length ? r2(total / trades.length) : 0,
+    avgWin: wins.length ? r2(grossWin / wins.length) : 0,
+    avgLoss: losses.length ? r2(-grossLoss / losses.length) : 0,
+    maxWinStreak: maxW,
+    maxLossStreak: maxL,
+    fees: r2(trades.reduce((s, t) => s + (t.fees || 0), 0)),
+    byProduct: Object.fromEntries(Object.entries(byProduct).map(([k, v]) => [k, { ...v, pnl: r2(v.pnl) }])),
+  };
+}
+
+export function equity() {
+  const trades = allTrades();
+  const daily = {};
+  for (const t of trades) {
+    const d = day(t.exit_time);
+    (daily[d] ??= { date: d, pnl: 0, trades: 0 });
+    daily[d].pnl += t.pnl; daily[d].trades++;
+  }
+  const days = Object.values(daily).sort((a, b) => a.date.localeCompare(b.date));
+  let cum = 0;
+  for (const d of days) { cum += d.pnl; d.pnl = r2(d.pnl); d.cum = r2(cum); }
+  return days;
+}
+
+export function patterns() {
+  const trades = allTrades();
+
+  // P&L / win-rate by hour of day and by weekday (exit time).
+  const byHour = {}, byDow = {};
+  for (const t of trades) {
+    const d = new Date(t.exit_time);
+    const h = d.getHours(), w = d.getDay();
+    (byHour[h] ??= { hour: h, pnl: 0, trades: 0, wins: 0 });
+    byHour[h].pnl += t.pnl; byHour[h].trades++; if (t.pnl > 0) byHour[h].wins++;
+    (byDow[w] ??= { dow: w, pnl: 0, trades: 0, wins: 0 });
+    byDow[w].pnl += t.pnl; byDow[w].trades++; if (t.pnl > 0) byDow[w].wins++;
+  }
+
+  // Revenge-trade check: trades entered within 5 minutes of a LOSING exit,
+  // compared with everything else. Also: do sizes grow right after a loss?
+  const REVENGE_MS = 5 * 60 * 1000;
+  const sorted = [...trades].sort((a, b) => a.entry_time.localeCompare(b.entry_time));
+  const revenge = [], normal = [];
+  let sizeAfterLoss = [], sizeOther = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const t = sorted[i];
+    const prev = sorted
+      .slice(0, i)
+      .filter((p) => p.exit_time <= t.entry_time)
+      .sort((a, b) => b.exit_time.localeCompare(a.exit_time))[0];
+    const afterLoss = prev && prev.pnl < 0;
+    const quick = prev && new Date(t.entry_time) - new Date(prev.exit_time) <= REVENGE_MS;
+    (afterLoss && quick ? revenge : normal).push(t);
+    (afterLoss ? sizeAfterLoss : sizeOther).push(t.qty || 1);
+  }
+  const agg = (arr) => ({
+    trades: arr.length,
+    pnl: r2(arr.reduce((s, t) => s + t.pnl, 0)),
+    winRate: arr.length ? r2((arr.filter((t) => t.pnl > 0).length / arr.length) * 100) : null,
+    avgPnl: arr.length ? r2(arr.reduce((s, t) => s + t.pnl, 0) / arr.length) : null,
+  });
+  const avg = (a) => (a.length ? r2(a.reduce((s, x) => s + x, 0) / a.length) : null);
+
+  // Overtrading: per-day trade counts on green vs red days.
+  const daily = {};
+  for (const t of trades) {
+    const d = day(t.exit_time);
+    (daily[d] ??= { pnl: 0, trades: 0 });
+    daily[d].pnl += t.pnl; daily[d].trades++;
+  }
+  const days = Object.values(daily);
+  const greenDays = days.filter((d) => d.pnl > 0), redDays = days.filter((d) => d.pnl < 0);
+
+  // Personal daily-loss-limit discipline: on days that breached the limit,
+  // how much MORE was lost by continuing to trade past the breach point?
+  const limit = parseFloat(getSettings().daily_loss_limit || '0');
+  let breachDays = 0, lossAfterBreach = 0;
+  if (limit > 0) {
+    const byDay = {};
+    for (const t of trades) (byDay[day(t.exit_time)] ??= []).push(t);
+    for (const d of Object.keys(byDay)) {
+      let run = 0, breached = false;
+      for (const t of byDay[d].sort((a, b) => a.exit_time.localeCompare(b.exit_time))) {
+        if (breached) lossAfterBreach += t.pnl;
+        run += t.pnl;
+        if (!breached && run <= -limit) { breached = true; breachDays++; }
+      }
+    }
+  }
+
+  return {
+    byHour: Object.values(byHour).map((h) => ({ ...h, pnl: r2(h.pnl) })).sort((a, b) => a.hour - b.hour),
+    byDow: Object.values(byDow).map((d) => ({ ...d, pnl: r2(d.pnl) })).sort((a, b) => a.dow - b.dow),
+    revenge: agg(revenge),
+    nonRevenge: agg(normal),
+    avgSizeAfterLoss: avg(sizeAfterLoss),
+    avgSizeOther: avg(sizeOther),
+    avgTradesGreenDay: greenDays.length ? r2(greenDays.reduce((s, d) => s + d.trades, 0) / greenDays.length) : null,
+    avgTradesRedDay: redDays.length ? r2(redDays.reduce((s, d) => s + d.trades, 0) / redDays.length) : null,
+    dailyLossLimit: limit,
+    breachDays,
+    lossAfterBreach: r2(lossAfterBreach),
+    mistakeTags: mistakeBreakdown(),
+  };
+}
+
+// P&L attribution per mistake tag (from trade_meta.mistakes JSON arrays).
+function mistakeBreakdown() {
+  const rows = db.prepare(`
+    SELECT m.mistakes, t.pnl FROM trade_meta m JOIN trades t ON t.id = m.trade_id
+    WHERE m.mistakes IS NOT NULL AND m.mistakes != '[]'
+  `).all();
+  const tags = {};
+  for (const r of rows) {
+    let arr = [];
+    try { arr = JSON.parse(r.mistakes); } catch {}
+    for (const tag of arr) {
+      (tags[tag] ??= { tag, trades: 0, pnl: 0 });
+      tags[tag].trades++; tags[tag].pnl += r.pnl;
+    }
+  }
+  return Object.values(tags).map((t) => ({ ...t, pnl: r2(t.pnl) })).sort((a, b) => a.pnl - b.pnl);
+}
+
+// Apex-style EOD trailing drawdown simulation over the imported history.
+export function risk() {
+  const s = getSettings();
+  const start = parseFloat(s.start_balance || '0');
+  const dd = parseFloat(s.trailing_dd || '0');
+  const stopsAtStart = s.dd_stops_at_start === '1';
+
+  const days = equity(); // ordered daily closes
+  let balance = start;
+  let threshold = start - dd;
+  let minDistance = dd, breachedOn = null;
+  const series = [];
+  for (const d of days) {
+    // Intraday breach is approximated at day granularity (fills-level equity
+    // would need tick data); EOD trailing updates AFTER the day closes.
+    balance = start + d.cum;
+    if (balance <= threshold && !breachedOn) breachedOn = d.date;
+    series.push({ date: d.date, balance: r2(balance), threshold: r2(threshold) });
+    if (balance - dd > threshold) {
+      threshold = balance - dd;
+      if (stopsAtStart && threshold > start) threshold = start;
+    }
+    minDistance = Math.min(minDistance, balance - threshold);
+  }
+  return {
+    startBalance: start,
+    trailingDd: dd,
+    currentBalance: r2(balance),
+    currentThreshold: r2(threshold),
+    distance: r2(balance - threshold),
+    minDistance: r2(minDistance),
+    breachedOn,
+    series,
+  };
+}
+
+const r2 = (n) => Math.round(n * 100) / 100;
