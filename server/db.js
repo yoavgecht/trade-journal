@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS trade_meta (
   setup TEXT,
   mistakes TEXT,            -- JSON array of tags
   notes TEXT,
-  rating INTEGER
+  rating INTEGER,           -- 1-5 execution quality, independent of P&L
+  screenshots TEXT          -- JSON array of filenames in screenshots/ (max 2)
 );
 
 CREATE TABLE IF NOT EXISTS products (
@@ -80,6 +81,12 @@ CREATE TABLE IF NOT EXISTS products (
   fee_rt REAL NOT NULL DEFAULT 0  -- round-trip fees+commissions per contract
 );
 `);
+
+// Pre-screenshots installs: add the column in place (meta is worth keeping).
+const metaCols = db.prepare("SELECT name FROM pragma_table_info('trade_meta')").all().map((c) => c.name);
+if (metaCols.length && !metaCols.includes('screenshots')) {
+  db.exec('ALTER TABLE trade_meta ADD COLUMN screenshots TEXT');
+}
 
 // NQ & ES only (minis + micros). fee_rt defaults are typical Tradovate/Apex
 // all-in round-trips — editable in Settings.

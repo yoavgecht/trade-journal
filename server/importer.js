@@ -140,8 +140,8 @@ export function rebuildTradesFromFills(journalId) {
     (journal_id, account, product, contract, direction, qty, entry_time, exit_time,
      entry_price, exit_price, points, pnl, fees, duration_s, source)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fills')`);
-  const insertMeta = db.prepare(`INSERT INTO trade_meta (trade_id, setup, mistakes, notes, rating)
-    VALUES (?, ?, ?, ?, ?)`);
+  const insertMeta = db.prepare(`INSERT INTO trade_meta (trade_id, setup, mistakes, notes, rating, screenshots)
+    VALUES (?, ?, ?, ?, ?, ?)`);
 
   let count = 0;
   const groups = {};
@@ -172,7 +172,7 @@ export function rebuildTradesFromFills(journalId) {
         );
         const sig = `${f0.account}|${f0.contract}|${entryTime}|${lastFill.fill_time}`;
         const meta = metaBySig[sig];
-        if (meta) insertMeta.run(r.lastInsertRowid, meta.setup, meta.mistakes, meta.notes, meta.rating);
+        if (meta) insertMeta.run(r.lastInsertRowid, meta.setup, meta.mistakes, meta.notes, meta.rating, meta.screenshots);
         count++;
         closedPairs = []; entryTime = null; maxAbs = 0;
       };

@@ -4,6 +4,8 @@
 // prop account.
 import express from 'express';
 import multer from 'multer';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getJournal, productMap } from './db.js';
@@ -83,7 +85,7 @@ app.get('/api/trades', (req, res) => {
   const id = journalId(req, res);
   if (!id) return;
   const rows = db.prepare(`
-    SELECT t.*, m.setup, m.mistakes, m.notes, m.rating
+    SELECT t.*, m.setup, m.mistakes, m.notes, m.rating, m.screenshots
     FROM trades t LEFT JOIN trade_meta m ON m.trade_id = t.id
     WHERE t.journal_id = ?
     ORDER BY t.exit_time DESC
@@ -95,12 +97,56 @@ app.patch('/api/trades/:id/meta', (req, res) => {
   const id = Number(req.params.id);
   if (!db.prepare('SELECT 1 FROM trades WHERE id = ?').get(id)) return res.status(404).json({ error: 'no such trade' });
   const { setup = null, mistakes = null, notes = null, rating = null } = req.body || {};
+  // screenshots are managed by their own endpoints — never clobbered here.
   db.prepare(`
     INSERT INTO trade_meta (trade_id, setup, mistakes, notes, rating) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(trade_id) DO UPDATE SET setup=excluded.setup, mistakes=excluded.mistakes,
       notes=excluded.notes, rating=excluded.rating
   `).run(id, setup, mistakes == null ? null : JSON.stringify(mistakes), notes, rating);
   res.json({ ok: true });
+});
+
+// --- trade screenshots (max 2 per trade; files live in screenshots/) ---------
+const shotsDir = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'screenshots');
+fs.mkdirSync(shotsDir, { recursive: true });
+app.use('/api/screenshots', express.static(shotsDir));
+
+const getShots = (tradeId) => {
+  const row = db.prepare('SELECT screenshots FROM trade_meta WHERE trade_id = ?').get(tradeId);
+  try { return JSON.parse(row?.screenshots || '[]'); } catch { return []; }
+};
+const setShots = (tradeId, shots) => {
+  db.prepare(`
+    INSERT INTO trade_meta (trade_id, screenshots) VALUES (?, ?)
+    ON CONFLICT(trade_id) DO UPDATE SET screenshots = excluded.screenshots
+  `).run(tradeId, JSON.stringify(shots));
+};
+
+app.post('/api/trades/:id/screenshots', upload.array('files'), (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.prepare('SELECT 1 FROM trades WHERE id = ?').get(id)) return res.status(404).json({ error: 'no such trade' });
+  const shots = getShots(id);
+  let rejected = 0;
+  for (const f of req.files || []) {
+    if (shots.length >= 2) { rejected++; continue; }
+    if (!/^image\//.test(f.mimetype)) { rejected++; continue; }
+    const ext = (f.originalname.match(/\.(png|jpe?g|gif|webp)$/i)?.[1] || 'png').toLowerCase();
+    const name = `t${id}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
+    fs.writeFileSync(path.join(shotsDir, name), f.buffer);
+    shots.push(name);
+  }
+  setShots(id, shots);
+  res.json({ screenshots: shots, rejected });
+});
+
+app.delete('/api/trades/:id/screenshots/:name', (req, res) => {
+  const id = Number(req.params.id);
+  const shots = getShots(id);
+  const name = req.params.name;
+  if (!shots.includes(name)) return res.status(404).json({ error: 'no such screenshot' });
+  setShots(id, shots.filter((s) => s !== name));
+  fs.rm(path.join(shotsDir, name), () => {});
+  res.json({ screenshots: shots.filter((s) => s !== name) });
 });
 
 // --- products (global: NQ/ES + micros) ----------------------------------------
