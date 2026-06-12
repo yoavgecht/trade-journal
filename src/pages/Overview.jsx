@@ -266,7 +266,7 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
               <h2>Trading Growth Curve <span className="muted" style={{ textTransform: 'none', fontWeight: 500 }}>
                 — distance to blowout: <b className={risk.distance < risk.trailingDd * 0.35 ? 'neg' : 'pos'}>{money(risk.distance)}</b>
               </span></h2>
-              <ResponsiveContainer width="100%" height={220}>
+              <ResponsiveContainer width="100%" height={400}>
                 <AreaChart data={risk.series}>
                   <defs>
                     <linearGradient id="growfill" x1="0" y1="0" x2="0" y2="1">
@@ -285,9 +285,13 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
             </div>
           )}
 
-          {/* Calendar + evaluation */}
-          <div className="grid" style={{ gridTemplateColumns: '2fr 1fr', marginBottom: 14, alignItems: 'start' }}>
+          {/* Calendar — full width, MFFU style */}
+          <div style={{ marginBottom: 14 }}>
             <ProfitCalendar equity={d.equity} conv={conv} onDayClick={setReviewDay} />
+          </div>
+
+          {/* Evaluation + breakdown charts */}
+          <div className="grid" style={{ gridTemplateColumns: '1.15fr 1fr 1fr 1fr', alignItems: 'start' }}>
             <div className="panel">
               <h2>Evaluation</h2>
               <div className="eval-row"><span className="k">Total Number of Trades</span><span className="v">{d.trades}</span></div>
@@ -306,10 +310,6 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
                 <span className="v">{d.last5.map((r, i) => <span key={i} className={`chip ${r}`}>{r}</span>)}</span>
               </div>
             </div>
-          </div>
-
-          {/* Bottom row */}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
             <div className="panel">
               <h2>Performance by Instrument</h2>
               <ResponsiveContainer width="100%" height={180}>

@@ -21,7 +21,7 @@ a { color: inherit; text-decoration: none; }
 .nav-link { display: block; padding: 9px 12px; border-radius: 8px; color: var(--muted); margin-bottom: 2px; font-weight: 500; }
 .nav-link.active { background: var(--panel2); color: var(--text); }
 .nav-link:hover { color: var(--text); }
-.main { flex: 1; padding: 24px 28px; max-width: 1280px; }
+.main { flex: 1; padding: 24px 28px; max-width: 1680px; }
 
 h1 { font-size: 20px; margin: 0 0 18px; }
 h2 { font-size: 13px; color: var(--muted); font-weight: 600; margin: 0 0 10px; }
@@ -68,17 +68,17 @@ textarea { width: 100%; resize: vertical; }
 .cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .cal-title { font-weight: 700; font-size: 15px; }
 .cal-nav { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; width: 30px; height: 30px; padding: 0; line-height: 1; }
-.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; }
 .cal-dow { text-align: center; color: var(--muted); font-size: 12px; font-weight: 600; padding-bottom: 2px; }
-.cal-cell { border: 1px solid transparent; border-radius: 10px; min-height: 78px; padding: 6px 9px; background: #f6f6fa; }
+.cal-cell { border: 1px solid transparent; border-radius: 12px; min-height: 112px; padding: 8px 11px; background: #f6f6fa; display: flex; flex-direction: column; justify-content: space-between; }
 .cal-cell.out { background: repeating-linear-gradient(45deg, #f6f6fa, #f6f6fa 6px, #eeeef4 6px, #eeeef4 12px); }
 .cal-cell.out > * { opacity: 0.5; }
 .cal-cell.green { background: #e3fadf; }
 .cal-cell.red { background: var(--red-soft); }
 .cal-cell.today { border-color: #111827; }
-.cal-day { font-size: 11px; color: var(--muted); text-align: right; }
-.cal-pnl { font-weight: 700; font-size: 13px; margin-top: 2px; }
-.cal-trades { font-size: 11px; color: var(--muted); }
+.cal-day { font-size: 12px; color: var(--muted); text-align: right; }
+.cal-pnl { font-weight: 700; font-size: 16px; margin-top: 2px; }
+.cal-trades { font-size: 12px; color: var(--muted); }
 .cal-bar { height: 4px; border-radius: 2px; margin-top: 4px; }
 .cal-none { font-size: 11px; color: var(--muted); margin-top: 12px; text-align: center; }
 
