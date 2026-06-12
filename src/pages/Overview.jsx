@@ -5,6 +5,7 @@ import {
   Tooltip, CartesianGrid, ReferenceLine, Cell,
 } from 'recharts';
 import { api, money, fmt } from '../api.js';
+import DayPanel from '../components/DayPanel.jsx';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
@@ -86,7 +87,7 @@ function Sparkline({ data }) {
 
 // ---- profit calendar -------------------------------------------------------
 
-function ProfitCalendar({ equity, conv }) {
+function ProfitCalendar({ equity, conv, onDayClick }) {
   const byDate = useMemo(() => Object.fromEntries(equity.map((d) => [d.date, d])), [equity]);
   const latest = equity.length ? equity[equity.length - 1].date : new Date().toISOString().slice(0, 10);
   const [ym, setYm] = useState(() => latest.slice(0, 7)); // "YYYY-MM"
@@ -127,8 +128,11 @@ function ProfitCalendar({ equity, conv }) {
           const out = d.getMonth() !== month - 1;
           const today = key(d) === new Date().toISOString().slice(0, 10);
           const cls = data ? (data.pnl >= 0 ? 'green' : 'red') : '';
+          const clickable = data && !out;
           return (
-            <div key={i} className={`cal-cell ${cls} ${out ? 'out' : ''} ${today ? 'today' : ''}`}>
+            <div key={i} className={`cal-cell ${cls} ${out ? 'out' : ''} ${today ? 'today' : ''} ${clickable ? 'clickable' : ''}`}
+              onClick={clickable ? () => onDayClick(key(d)) : undefined}
+              title={clickable ? 'Open day review' : undefined}>
               <div className="cal-day">{d.getDate()}</div>
               {data && !out && (
                 <div style={{ textAlign: 'center' }}>
@@ -154,6 +158,7 @@ function ProfitCalendar({ equity, conv }) {
 export default function Overview({ dataVersion, journal, onOpenImport }) {
   const [d, setD] = useState(null);
   const [unit, setUnit] = useState('usd');
+  const [reviewDay, setReviewDay] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => { api('/dashboard').then(setD); }, [dataVersion]);
@@ -251,7 +256,7 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
 
           {/* Calendar + evaluation */}
           <div className="grid" style={{ gridTemplateColumns: '2fr 1fr', marginBottom: 14, alignItems: 'start' }}>
-            <ProfitCalendar equity={d.equity} conv={conv} />
+            <ProfitCalendar equity={d.equity} conv={conv} onDayClick={setReviewDay} />
             <div className="panel">
               <h2>Evaluation</h2>
               <div className="eval-row"><span className="k">Total Number of Trades</span><span className="v">{d.trades}</span></div>
@@ -326,6 +331,7 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
           </div>
         </>
       )}
+      {reviewDay && <DayPanel date={reviewDay} onClose={() => setReviewDay(null)} />}
     </>
   );
 }
