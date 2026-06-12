@@ -151,29 +151,12 @@ function ProfitCalendar({ equity, conv }) {
 
 // ---- page ------------------------------------------------------------------
 
-export default function Overview({ dataVersion, onImport }) {
+export default function Overview({ dataVersion, journal, onOpenImport }) {
   const [d, setD] = useState(null);
-  const [importMsg, setImportMsg] = useState(null);
-  const [over, setOver] = useState(false);
   const [unit, setUnit] = useState('usd');
-  const fileRef = useRef();
   const navigate = useNavigate();
 
   useEffect(() => { api('/dashboard').then(setD); }, [dataVersion]);
-
-  const handleFiles = async (files) => {
-    if (!files?.length) return;
-    setImportMsg('Importing…');
-    try {
-      const results = await onImport(files);
-      setImportMsg(results.map((r) =>
-        r.error ? `${r.file}: ❌ ${r.error}`
-          : `${r.file}: ${r.kind === 'performance' ? `${r.trades} trades` : `${r.fills} fills → ${r.trades} trades`}${r.skipped ? ` (${r.skipped} skipped/dupes)` : ''}`,
-      ).join('  ·  '));
-    } catch (e) {
-      setImportMsg(`Import failed: ${e.message}`);
-    }
-  };
 
   if (!d) return null;
   const empty = d.trades === 0;
@@ -210,23 +193,13 @@ export default function Overview({ dataVersion, onImport }) {
         )}
       </div>
 
-      <div
-        className={`dropzone ${over ? 'over' : ''}`}
-        onClick={() => fileRef.current.click()}
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); handleFiles([...e.dataTransfer.files]); }}
-        style={{ marginBottom: 14 }}
-      >
-        Drop Tradovate CSV exports here (Fills or Performance) — or click to choose
-        <input ref={fileRef} type="file" accept=".csv" multiple hidden
-          onChange={(e) => { handleFiles([...e.target.files]); e.target.value = ''; }} />
-      </div>
-      {importMsg && <div className="muted" style={{ marginBottom: 14 }}>{importMsg}</div>}
-
       {empty ? (
-        <div className="panel muted">
-          No trades yet. In Tradovate: Reports → Fills (or Performance) → Export CSV, then drop the file above.
+        <div className="panel" style={{ textAlign: 'center', padding: 40 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>{journal.name} has no trades yet</div>
+          <div className="muted" style={{ marginBottom: 16 }}>
+            Export your trades from Tradovate (Reports → Fills) and import them here.
+          </div>
+          <button onClick={onOpenImport}>Import Trades</button>
         </div>
       ) : (
         <>

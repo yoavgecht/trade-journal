@@ -1,62 +1,85 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 
-export default function Settings({ onChanged }) {
-  const [settings, setSettings] = useState(null);
+export default function Settings({ journal, onChanged, onJournalsChanged }) {
+  const [form, setForm] = useState(null);
   const [products, setProducts] = useState(null);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    api('/settings').then(({ settings, products }) => { setSettings(settings); setProducts(products); });
-  }, []);
+    setForm({ ...journal });
+    api('/products').then(setProducts);
+  }, [journal.id]);
 
-  if (!settings || !products) return null;
+  if (!form || !products) return null;
 
-  const set = (k, v) => { setSettings((s) => ({ ...s, [k]: v })); setSaved(false); };
+  const set = (k, v) => { setForm((f) => ({ ...f, [k]: v })); setSaved(false); };
   const setProd = (sym, field, v) => {
     setProducts((p) => ({ ...p, [sym]: { ...p[sym], [field]: v } }));
     setSaved(false);
   };
 
   const save = async () => {
-    await api('/settings', { method: 'PATCH', body: { settings, products } });
+    await api(`/journals/${journal.id}`, {
+      method: 'PATCH',
+      body: {
+        name: form.name,
+        start_balance: Number(form.start_balance),
+        trailing_dd: Number(form.trailing_dd),
+        daily_loss_limit: Number(form.daily_loss_limit),
+        dd_stops_at_start: form.dd_stops_at_start ? 1 : 0,
+      },
+    });
+    await api('/products', { method: 'PATCH', body: products });
     setSaved(true);
-    onChanged?.();
+    onChanged(await api('/journals'));
   };
 
-  const reset = async () => {
-    if (!confirm('Delete ALL imported fills and trades? Settings are kept. This cannot be undone.')) return;
+  const resetData = async () => {
+    if (!confirm(`Delete ALL imported fills and trades in "${journal.name}"? The journal and its rules are kept. This cannot be undone.`)) return;
     await api('/reset', { method: 'POST' });
-    onChanged?.();
+    onChanged();
+  };
+
+  const deleteJournal = async () => {
+    if (!confirm(`Delete the journal "${journal.name}" AND all its data? This cannot be undone.`)) return;
+    await api(`/journals/${journal.id}`, { method: 'DELETE' });
+    onJournalsChanged();
   };
 
   return (
     <>
-      <h1>Settings</h1>
+      <h1>Settings — {journal.name}</h1>
       <div className="panel" style={{ marginBottom: 14 }}>
-        <h2>Prop account rules (used by the Risk view)</h2>
-        <div className="row" style={{ marginBottom: 8 }}>
-          <label className="muted">Starting balance</label>
-          <input type="number" value={settings.start_balance} onChange={(e) => set('start_balance', e.target.value)} />
-          <label className="muted">Trailing drawdown</label>
-          <input type="number" value={settings.trailing_dd} onChange={(e) => set('trailing_dd', e.target.value)} />
+        <h2>Journal</h2>
+        <div className="field" style={{ maxWidth: 360 }}>
+          <label>Journal Name</label>
+          <input value={form.name} onChange={(e) => set('name', e.target.value)} />
         </div>
-        <div className="row" style={{ marginBottom: 8 }}>
-          <label className="muted">
-            <input type="checkbox" checked={settings.dd_stops_at_start === '1'}
-              onChange={(e) => set('dd_stops_at_start', e.target.checked ? '1' : '0')} />
-            {' '}Threshold stops trailing at starting balance (Apex PA style)
-          </label>
+        <div className="field-row" style={{ maxWidth: 560 }}>
+          <div className="field">
+            <label>Account Size ($)</label>
+            <input type="number" value={form.start_balance} onChange={(e) => set('start_balance', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Trailing Drawdown ($)</label>
+            <input type="number" value={form.trailing_dd} onChange={(e) => set('trailing_dd', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Personal Daily Loss Limit ($)</label>
+            <input type="number" value={form.daily_loss_limit} onChange={(e) => set('daily_loss_limit', e.target.value)} />
+          </div>
         </div>
-        <div className="row">
-          <label className="muted">Personal daily loss limit ($, for the discipline stats)</label>
-          <input type="number" value={settings.daily_loss_limit} onChange={(e) => set('daily_loss_limit', e.target.value)} />
-        </div>
+        <label className="muted" style={{ fontSize: 13 }}>
+          <input type="checkbox" checked={!!form.dd_stops_at_start}
+            onChange={(e) => set('dd_stops_at_start', e.target.checked)} />
+          {' '}Threshold stops trailing at starting balance (Apex PA style)
+        </label>
       </div>
 
       <div className="panel" style={{ marginBottom: 14 }}>
-        <h2>Instruments</h2>
-        <table>
+        <h2>Instruments (NQ / ES futures)</h2>
+        <table style={{ maxWidth: 460 }}>
           <thead><tr><th>Symbol</th><th>$ / point</th><th>Round-trip fees ($/contract)</th></tr></thead>
           <tbody>
             {Object.values(products).map((p) => (
@@ -79,7 +102,8 @@ export default function Settings({ onChanged }) {
       <div className="row">
         <button onClick={save}>{saved ? 'Saved ✓' : 'Save settings'}</button>
         <div className="spacer" />
-        <button className="danger" onClick={reset}>Delete all data</button>
+        <button className="danger" onClick={resetData}>Delete journal data</button>
+        <button className="danger" onClick={deleteJournal}>Delete journal</button>
       </div>
     </>
   );

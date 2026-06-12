@@ -77,7 +77,7 @@ const num = (v) => {
   return Number.isNaN(n) ? null : n;
 };
 
-export function importCsv(text, filename) {
+export function importCsv(text, filename, journalId) {
   const parsed = Papa.parse(text.replace(/^﻿/, ''), { header: true, skipEmptyLines: true });
   const rows = parsed.data;
   if (!rows.length) return { kind: 'empty', fills: 0, trades: 0, skipped: 0 };
@@ -86,14 +86,15 @@ export function importCsv(text, filename) {
   const isPerformance = headers.some((h) => P.pnl.includes(h)) &&
     (headers.some((h) => P.buyPrice.includes(h)) || headers.some((h) => P.soldTime.includes(h)));
 
-  return isPerformance ? importPerformance(rows, filename) : importFills(rows, filename);
+  return isPerformance ? importPerformance(rows, filename, journalId) : importFills(rows, filename, journalId);
 }
 
-function importFills(rows, filename) {
+function importFills(rows, filename, journalId) {
+  const products = productMap();
   const insert = db.prepare(`INSERT OR IGNORE INTO fills
-    (account, contract, product, side, qty, price, fill_time, source_file, hash)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  let added = 0, skipped = 0;
+    (journal_id, account, contract, product, side, qty, price, fill_time, source_file, hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  let added = 0, skipped = 0, otherMarkets = 0;
   const tx = db.transaction(() => {
     for (const row of rows) {
       const time = parseTime(pick(row, F.time));
@@ -104,40 +105,41 @@ function importFills(rows, filename) {
       const contract = String(pick(row, F.contract) || '').trim().toUpperCase();
       if (!time || !side || !qty || price == null || !contract) { skipped++; continue; }
       const product = String(pick(row, F.product) || '').trim().toUpperCase() || productFromContract(contract);
+      if (!products[product]) { otherMarkets++; continue; } // NQ/ES (+micros) only
       const account = String(pick(row, F.account) || 'default').trim();
       const hash = crypto.createHash('sha1')
-        .update([account, contract, side, qty, price, time].join('|')).digest('hex');
-      const r = insert.run(account, contract, product, side, qty, price, time, filename, hash);
+        .update([journalId, account, contract, side, qty, price, time].join('|')).digest('hex');
+      const r = insert.run(journalId, account, contract, product, side, qty, price, time, filename, hash);
       if (r.changes > 0) added++; else skipped++;
     }
   });
   tx();
-  const trades = rebuildTradesFromFills();
-  return { kind: 'fills', fills: added, trades, skipped };
+  const trades = rebuildTradesFromFills(journalId);
+  return { kind: 'fills', fills: added, trades, skipped, otherMarkets };
 }
 
 // FIFO pairing. Trades sourced from fills are fully rebuilt on every import —
 // fills are the source of truth, so pairing stays correct even when fills
 // arrive across multiple files out of order. Pre-paired (performance) trades
 // are left untouched. trade_meta survives via a stable signature match.
-export function rebuildTradesFromFills() {
+export function rebuildTradesFromFills(journalId) {
   const products = productMap();
-  const fills = db.prepare('SELECT * FROM fills ORDER BY fill_time, id').all();
+  const fills = db.prepare('SELECT * FROM fills WHERE journal_id = ? ORDER BY fill_time, id').all(journalId);
 
   // Preserve meta: signature = account|contract|entry_time|exit_time
-  const oldTrades = db.prepare("SELECT * FROM trades WHERE source = 'fills'").all();
+  const oldTrades = db.prepare("SELECT * FROM trades WHERE source = 'fills' AND journal_id = ?").all(journalId);
   const metaBySig = {};
   for (const t of oldTrades) {
     const meta = db.prepare('SELECT * FROM trade_meta WHERE trade_id = ?').get(t.id);
     if (meta) metaBySig[`${t.account}|${t.contract}|${t.entry_time}|${t.exit_time}`] = meta;
   }
-  db.prepare("DELETE FROM trade_meta WHERE trade_id IN (SELECT id FROM trades WHERE source = 'fills')").run();
-  db.prepare("DELETE FROM trades WHERE source = 'fills'").run();
+  db.prepare("DELETE FROM trade_meta WHERE trade_id IN (SELECT id FROM trades WHERE source = 'fills' AND journal_id = ?)").run(journalId);
+  db.prepare("DELETE FROM trades WHERE source = 'fills' AND journal_id = ?").run(journalId);
 
   const insert = db.prepare(`INSERT INTO trades
-    (account, product, contract, direction, qty, entry_time, exit_time,
+    (journal_id, account, product, contract, direction, qty, entry_time, exit_time,
      entry_price, exit_price, points, pnl, fees, duration_s, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fills')`);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fills')`);
   const insertMeta = db.prepare(`INSERT INTO trade_meta (trade_id, setup, mistakes, notes, rating)
     VALUES (?, ?, ?, ?, ?)`);
 
@@ -165,7 +167,7 @@ export function rebuildTradesFromFills() {
         const pnl = points * product.point_value * totQty - fees;
         const durS = Math.max(0, (new Date(lastFill.fill_time) - new Date(entryTime)) / 1000);
         const r = insert.run(
-          f0.account, f0.product, f0.contract, dir, maxAbs, entryTime, lastFill.fill_time,
+          journalId, f0.account, f0.product, f0.contract, dir, maxAbs, entryTime, lastFill.fill_time,
           round(entryAvg), round(exitAvg), round(points), round(pnl), round(fees), Math.round(durS),
         );
         const sig = `${f0.account}|${f0.contract}|${entryTime}|${lastFill.fill_time}`;
@@ -204,15 +206,15 @@ export function rebuildTradesFromFills() {
   return count;
 }
 
-function importPerformance(rows, filename) {
+function importPerformance(rows, filename, journalId) {
   const products = productMap();
   const insert = db.prepare(`INSERT INTO trades
-    (account, product, contract, direction, qty, entry_time, exit_time,
+    (journal_id, account, product, contract, direction, qty, entry_time, exit_time,
      entry_price, exit_price, points, pnl, fees, duration_s, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'performance')`);
-  const exists = db.prepare(`SELECT 1 FROM trades WHERE source='performance'
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'performance')`);
+  const exists = db.prepare(`SELECT 1 FROM trades WHERE source='performance' AND journal_id=?
     AND account=? AND contract=? AND entry_time=? AND exit_time=? AND pnl=?`);
-  let added = 0, skipped = 0;
+  let added = 0, skipped = 0, otherMarkets = 0;
   const tx = db.transaction(() => {
     for (const row of rows) {
       const contract = String(pick(row, P.symbol) || '').trim().toUpperCase();
@@ -230,6 +232,7 @@ function importPerformance(rows, filename) {
       const entryPrice = direction === 'long' ? buyPrice : sellPrice;
       const exitPrice = direction === 'long' ? sellPrice : buyPrice;
       const product = productFromContract(contract);
+      if (!products[product]) { otherMarkets++; continue; } // NQ/ES (+micros) only
       const pv = products[product]?.point_value || 1;
       const points = entryPrice != null && exitPrice != null
         ? (direction === 'long' ? exitPrice - entryPrice : entryPrice - exitPrice)
@@ -238,15 +241,15 @@ function importPerformance(rows, filename) {
       const durS = entryTime && exitTime ? Math.max(0, (new Date(exitTime) - new Date(entryTime)) / 1000) : null;
       const account = String(pick(row, P.account) || 'default').trim();
 
-      if (exists.get(account, contract, entryTime, exitTime, round(pnlRaw - fees))) { skipped++; continue; }
-      insert.run(account, product, contract, direction, qty, entryTime, exitTime,
+      if (exists.get(journalId, account, contract, entryTime, exitTime, round(pnlRaw - fees))) { skipped++; continue; }
+      insert.run(journalId, account, product, contract, direction, qty, entryTime, exitTime,
         entryPrice, exitPrice, round(points), round(pnlRaw - fees), round(fees),
         durS == null ? null : Math.round(durS));
       added++;
     }
   });
   tx();
-  return { kind: 'performance', fills: 0, trades: added, skipped };
+  return { kind: 'performance', fills: 0, trades: added, skipped, otherMarkets };
 }
 
 const round = (n) => (n == null ? null : Math.round(n * 100) / 100);

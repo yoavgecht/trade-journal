@@ -1,7 +1,10 @@
-// SQLite storage — single local file (journal.db next to this folder's root).
-// Fills are the raw imported rows (deduped by content hash); trades are the
-// FIFO-paired round trips the dashboard reads. Settings hold prop-firm rule
-// numbers so the Risk view can simulate trailing drawdown.
+// SQLite storage — single local file (journal.db in the project root).
+//
+// A JOURNAL = one prop account (e.g. "Apex 50k Eval #3") with its own rules
+// (start balance, trailing drawdown, personal daily loss limit). Fills and
+// trades belong to a journal; the dashboard always shows one journal at a
+// time. Futures-only: NQ & ES (plus their micros MNQ/MES) — the importer
+// skips anything else.
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -9,13 +12,33 @@ import path from 'node:path';
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const db = new Database(path.join(root, 'journal.db'));
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+// Pre-journals schema (no journal_id) only ever held sample data — rebuild.
+const fillCols = db.prepare("SELECT name FROM pragma_table_info('fills')").all().map((c) => c.name);
+if (fillCols.length && !fillCols.includes('journal_id')) {
+  db.exec('DROP TABLE IF EXISTS trade_meta; DROP TABLE IF EXISTS trades; DROP TABLE IF EXISTS fills;');
+}
+db.exec('DROP TABLE IF EXISTS settings;'); // replaced by per-journal columns
 
 db.exec(`
+CREATE TABLE IF NOT EXISTS journals (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  start_balance REAL NOT NULL DEFAULT 50000,
+  trailing_dd REAL NOT NULL DEFAULT 2500,
+  dd_stops_at_start INTEGER NOT NULL DEFAULT 1,
+  daily_loss_limit REAL NOT NULL DEFAULT 1000,
+  deposit_date TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS fills (
   id INTEGER PRIMARY KEY,
+  journal_id INTEGER NOT NULL REFERENCES journals(id) ON DELETE CASCADE,
   account TEXT,
   contract TEXT,            -- e.g. NQZ4
-  product TEXT,             -- e.g. NQ
+  product TEXT,             -- NQ | ES | MNQ | MES
   side TEXT,                -- buy | sell
   qty INTEGER NOT NULL,
   price REAL NOT NULL,
@@ -26,6 +49,7 @@ CREATE TABLE IF NOT EXISTS fills (
 
 CREATE TABLE IF NOT EXISTS trades (
   id INTEGER PRIMARY KEY,
+  journal_id INTEGER NOT NULL REFERENCES journals(id) ON DELETE CASCADE,
   account TEXT,
   product TEXT,
   contract TEXT,
@@ -36,7 +60,7 @@ CREATE TABLE IF NOT EXISTS trades (
   entry_price REAL,         -- avg
   exit_price REAL,          -- avg
   points REAL,              -- per-contract points captured
-  pnl REAL,                 -- gross $ (point value applied), minus fees
+  pnl REAL,                 -- $ net of fees
   fees REAL DEFAULT 0,
   duration_s INTEGER,
   source TEXT DEFAULT 'fills' -- fills (paired here) | performance (pre-paired)
@@ -47,7 +71,7 @@ CREATE TABLE IF NOT EXISTS trade_meta (
   setup TEXT,
   mistakes TEXT,            -- JSON array of tags
   notes TEXT,
-  rating INTEGER            -- 1-5 execution quality, independent of P&L
+  rating INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS products (
@@ -55,45 +79,25 @@ CREATE TABLE IF NOT EXISTS products (
   point_value REAL NOT NULL,
   fee_rt REAL NOT NULL DEFAULT 0  -- round-trip fees+commissions per contract
 );
-
-CREATE TABLE IF NOT EXISTS settings (
-  key TEXT PRIMARY KEY,
-  value TEXT
-);
 `);
 
-// CME equity index futures the user trades (minis + micros). fee_rt defaults
-// are typical Tradovate/Apex all-in round-trips — editable in Settings.
+// NQ & ES only (minis + micros). fee_rt defaults are typical Tradovate/Apex
+// all-in round-trips — editable in Settings.
+db.exec("DELETE FROM products WHERE symbol NOT IN ('NQ','ES','MNQ','MES')");
 const seedProducts = db.prepare(
   'INSERT OR IGNORE INTO products (symbol, point_value, fee_rt) VALUES (?, ?, ?)',
 );
 for (const [sym, pv, fee] of [
   ['NQ', 20, 4.28], ['MNQ', 2, 1.04],
   ['ES', 50, 4.28], ['MES', 5, 1.04],
-  ['RTY', 50, 4.28], ['M2K', 5, 1.04],
-  ['YM', 5, 4.28], ['MYM', 0.5, 1.04],
 ]) seedProducts.run(sym, pv, fee);
 
-const seedSettings = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
-for (const [k, v] of [
-  ['start_balance', '50000'],   // Apex 50k eval default
-  ['trailing_dd', '2500'],      // its trailing drawdown
-  ['dd_stops_at_start', '1'],   // Apex-style: threshold stops trailing at start balance
-  ['daily_loss_limit', '1000'], // personal rule, not the firm's
-]) seedSettings.run(k, v);
-
-export function getSetting(key) {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-  return row ? row.value : null;
-}
-export function getSettings() {
-  return Object.fromEntries(db.prepare('SELECT key, value FROM settings').all().map((r) => [r.key, r.value]));
-}
-export function setSetting(key, value) {
-  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, String(value));
-}
 export function productMap() {
   const m = {};
   for (const p of db.prepare('SELECT * FROM products').all()) m[p.symbol] = p;
   return m;
+}
+
+export function getJournal(id) {
+  return db.prepare('SELECT * FROM journals WHERE id = ?').get(id);
 }

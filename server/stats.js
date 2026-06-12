@@ -1,14 +1,14 @@
 // Aggregations the dashboard reads. Everything derives from the trades table;
 // "day" means the trade's EXIT date (when P&L was realized).
-import { db, getSettings } from './db.js';
+import { db, getJournal } from './db.js';
 
-const allTrades = () =>
-  db.prepare('SELECT * FROM trades WHERE exit_time IS NOT NULL ORDER BY exit_time').all();
+const allTrades = (journalId) =>
+  db.prepare('SELECT * FROM trades WHERE exit_time IS NOT NULL AND journal_id = ? ORDER BY exit_time').all(journalId);
 
 const day = (iso) => (iso || '').slice(0, 10);
 
-export function summary() {
-  const trades = allTrades();
+export function summary(journalId) {
+  const trades = allTrades(journalId);
   const wins = trades.filter((t) => t.pnl > 0);
   const losses = trades.filter((t) => t.pnl < 0);
   const grossWin = wins.reduce((s, t) => s + t.pnl, 0);
@@ -43,8 +43,8 @@ export function summary() {
   };
 }
 
-export function equity() {
-  const trades = allTrades();
+export function equity(journalId) {
+  const trades = allTrades(journalId);
   const daily = {};
   for (const t of trades) {
     const d = day(t.exit_time);
@@ -57,8 +57,8 @@ export function equity() {
   return days;
 }
 
-export function patterns() {
-  const trades = allTrades();
+export function patterns(journalId) {
+  const trades = allTrades(journalId);
 
   // P&L / win-rate by hour of day and by weekday (exit time).
   const byHour = {}, byDow = {};
@@ -108,7 +108,7 @@ export function patterns() {
 
   // Personal daily-loss-limit discipline: on days that breached the limit,
   // how much MORE was lost by continuing to trade past the breach point?
-  const limit = parseFloat(getSettings().daily_loss_limit || '0');
+  const limit = getJournal(journalId)?.daily_loss_limit || 0;
   let breachDays = 0, lossAfterBreach = 0;
   if (limit > 0) {
     const byDay = {};
@@ -135,16 +135,16 @@ export function patterns() {
     dailyLossLimit: limit,
     breachDays,
     lossAfterBreach: r2(lossAfterBreach),
-    mistakeTags: mistakeBreakdown(),
+    mistakeTags: mistakeBreakdown(journalId),
   };
 }
 
 // P&L attribution per mistake tag (from trade_meta.mistakes JSON arrays).
-function mistakeBreakdown() {
+function mistakeBreakdown(journalId) {
   const rows = db.prepare(`
     SELECT m.mistakes, t.pnl FROM trade_meta m JOIN trades t ON t.id = m.trade_id
-    WHERE m.mistakes IS NOT NULL AND m.mistakes != '[]'
-  `).all();
+    WHERE t.journal_id = ? AND m.mistakes IS NOT NULL AND m.mistakes != '[]'
+  `).all(journalId);
   const tags = {};
   for (const r of rows) {
     let arr = [];
@@ -158,13 +158,13 @@ function mistakeBreakdown() {
 }
 
 // Apex-style EOD trailing drawdown simulation over the imported history.
-export function risk() {
-  const s = getSettings();
-  const start = parseFloat(s.start_balance || '0');
-  const dd = parseFloat(s.trailing_dd || '0');
-  const stopsAtStart = s.dd_stops_at_start === '1';
+export function risk(journalId) {
+  const j = getJournal(journalId) || {};
+  const start = j.start_balance || 0;
+  const dd = j.trailing_dd || 0;
+  const stopsAtStart = !!j.dd_stops_at_start;
 
-  const days = equity(); // ordered daily closes
+  const days = equity(journalId); // ordered daily closes
   let balance = start;
   let threshold = start - dd;
   let minDistance = dd, breachedOn = null;
@@ -194,12 +194,12 @@ export function risk() {
 }
 
 // Everything the Edgewonk-style home dashboard needs in one call.
-export function dashboard() {
-  const trades = allTrades();
-  const sum = summary();
-  const eq = equity();
-  const pat = patterns();
-  const start = parseFloat(getSettings().start_balance || '0');
+export function dashboard(journalId) {
+  const trades = allTrades(journalId);
+  const sum = summary(journalId);
+  const eq = equity(journalId);
+  const pat = patterns(journalId);
+  const start = getJournal(journalId)?.start_balance || 0;
 
   const BE = 5; // |pnl| ≤ $5 counts as break-even (scratches/fees noise)
   const wins = trades.filter((t) => t.pnl > BE);

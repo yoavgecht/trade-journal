@@ -1,5 +1,12 @@
+// Active journal is module-level so every data call is scoped automatically.
+let activeJournal = null;
+export function setActiveJournalId(id) { activeJournal = id; }
+
 export async function api(path, opts = {}) {
-  const res = await fetch(`/api${path}`, {
+  let url = `/api${path}`;
+  const needsScope = activeJournal && !path.startsWith('/journals') && !path.startsWith('/products');
+  if (needsScope) url += (url.includes('?') ? '&' : '?') + `journal=${activeJournal}`;
+  const res = await fetch(url, {
     headers: opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : undefined,
     ...opts,
     body: opts.body instanceof FormData ? opts.body : opts.body ? JSON.stringify(opts.body) : undefined,
