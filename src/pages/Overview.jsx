@@ -14,30 +14,56 @@ const tooltipStyle = { background: '#fff', border: '1px solid #e5e7eb', borderRa
 
 // ---- small SVG widgets -----------------------------------------------------
 
-// Donut from segments [{value, color}]; children render in the center.
-function Donut({ segments, size = 64, stroke = 9, children }) {
+// Semicircle gauge: green portion = pct, red the rest (Edgewonk winrate style).
+function Gauge({ pct, size = 86 }) {
+  const stroke = 10;
+  const r = (size - stroke) / 2;
+  const c = Math.PI * r; // half circumference
+  const green = (Math.max(0, Math.min(100, pct)) / 100) * c;
+  const cx = size / 2, cy = size / 2;
+  const arc = `M ${stroke / 2} ${cy} A ${r} ${r} 0 0 1 ${size - stroke / 2} ${cy}`;
+  return (
+    <svg width={size} height={size / 2 + 6}>
+      <path d={arc} fill="none" stroke="var(--red)" strokeWidth={stroke} strokeLinecap="round" />
+      <path d={arc} fill="none" stroke="var(--green)" strokeWidth={stroke} strokeLinecap="round"
+        strokeDasharray={`${green} ${c}`} />
+    </svg>
+  );
+}
+
+// Segmented donut (Edgewonk score style) — dashes around the ring, colored
+// portion = value/100.
+function Donut({ value, color, size = 64, stroke = 9, children }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
-  const total = segments.reduce((s, x) => s + x.value, 0) || 1;
-  let offset = 0;
+  const seg = c / 14; // 14 dashes
+  const filled = (Math.max(0, Math.min(100, value)) / 100) * c;
   return (
     <div style={{ position: 'relative', width: size, height: size }}>
       <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#f3f4f6" strokeWidth={stroke} />
-        {segments.map((s, i) => {
-          const len = (s.value / total) * c;
-          const el = (
-            <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={s.color}
-              strokeWidth={stroke} strokeDasharray={`${len} ${c - len}`} strokeDashoffset={-offset}
-              strokeLinecap="butt" />
-          );
-          offset += len;
-          return el;
-        })}
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={stroke}
+          strokeDasharray={`${seg * 0.62} ${seg * 0.38}`} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke}
+          strokeDasharray={`${seg * 0.62} ${seg * 0.38}`} />
+        {/* panel-colored arc on top hides the colored ring beyond the filled portion */}
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--panel)" strokeWidth={stroke + 2}
+          strokeDasharray={`${c - filled} ${filled}`} strokeDashoffset={-filled} />
       </svg>
       <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13 }}>
         {children}
       </div>
+    </div>
+  );
+}
+
+// Proportional green/red bar — avg win vs avg loss magnitude.
+function SplitBar({ win, loss }) {
+  const w = Math.abs(win), l = Math.abs(loss);
+  const total = w + l || 1;
+  return (
+    <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', marginTop: 4 }}>
+      <div style={{ width: `${(w / total) * 100}%`, background: 'var(--green)' }} />
+      <div style={{ width: `${(l / total) * 100}%`, background: 'var(--red)' }} />
     </div>
   );
 }
@@ -60,7 +86,7 @@ function Sparkline({ data }) {
 
 // ---- profit calendar -------------------------------------------------------
 
-function ProfitCalendar({ equity }) {
+function ProfitCalendar({ equity, conv }) {
   const byDate = useMemo(() => Object.fromEntries(equity.map((d) => [d.date, d])), [equity]);
   const latest = equity.length ? equity[equity.length - 1].date : new Date().toISOString().slice(0, 10);
   const [ym, setYm] = useState(() => latest.slice(0, 7)); // "YYYY-MM"
@@ -99,21 +125,21 @@ function ProfitCalendar({ equity }) {
         {cells.map((d, i) => {
           const data = byDate[key(d)];
           const out = d.getMonth() !== month - 1;
+          const today = key(d) === new Date().toISOString().slice(0, 10);
           const cls = data ? (data.pnl >= 0 ? 'green' : 'red') : '';
           return (
-            <div key={i} className={`cal-cell ${cls} ${out ? 'out' : ''}`}>
+            <div key={i} className={`cal-cell ${cls} ${out ? 'out' : ''} ${today ? 'today' : ''}`}>
               <div className="cal-day">{d.getDate()}</div>
-              {data ? (
-                <>
-                  <div className={`cal-pnl ${data.pnl >= 0 ? 'pos' : 'neg'}`}>{money(data.pnl)}</div>
+              {data && !out && (
+                <div style={{ textAlign: 'center' }}>
+                  <div className={`cal-pnl ${data.pnl >= 0 ? 'pos' : 'neg'}`}>{conv(data.pnl)}</div>
                   <div className="cal-trades">{data.trades} trade{data.trades !== 1 ? 's' : ''}</div>
                   <div className="cal-bar" style={{
                     width: `${Math.max(12, (Math.abs(data.pnl) / maxAbs) * 100)}%`,
+                    margin: '4px auto 0',
                     background: data.pnl >= 0 ? 'var(--green)' : 'var(--red)',
                   }} />
-                </>
-              ) : (
-                <div className="cal-none">No Trades</div>
+                </div>
               )}
             </div>
           );
@@ -129,6 +155,7 @@ export default function Overview({ dataVersion, onImport }) {
   const [d, setD] = useState(null);
   const [importMsg, setImportMsg] = useState(null);
   const [over, setOver] = useState(false);
+  const [unit, setUnit] = useState('usd');
   const fileRef = useRef();
   const navigate = useNavigate();
 
@@ -151,8 +178,16 @@ export default function Overview({ dataVersion, onImport }) {
   if (!d) return null;
   const empty = d.trades === 0;
   const ratio = d.avgLoss !== 0 ? Math.abs(d.avgWin / d.avgLoss) : null;
-  const pfFill = d.profitFactor == null ? 0 : Math.min(6, Math.round(d.profitFactor * 2));
+  const pfFill = d.profitFactor == null ? 0 : Math.min(8, Math.round(d.profitFactor * 2.5));
   const scoreColor = d.score >= 75 ? 'var(--green)' : d.score >= 45 ? '#f59e0b' : 'var(--red)';
+
+  // Unit toggle: dollars or % of starting balance (Edgewonk's USD / Return %).
+  const conv = (v) => {
+    if (v == null) return '—';
+    if (unit === 'usd' || !d.startBalance) return money(v);
+    const pct = (v / d.startBalance) * 100;
+    return `${pct < 0 ? '-' : ''}${Math.abs(pct).toFixed(2)}%`;
+  };
   const holdFmt = d.avgHoldS == null ? '—'
     : d.avgHoldS < 60 ? `${d.avgHoldS}s`
     : d.avgHoldS < 3600 ? `${(d.avgHoldS / 60).toFixed(0)}m`
@@ -161,12 +196,16 @@ export default function Overview({ dataVersion, onImport }) {
   return (
     <>
       <div className="row" style={{ marginBottom: 14 }}>
-        <h1 style={{ margin: 0 }}>Home</h1>
+        <div className="unit-tabs">
+          <button className={`unit-tab ${unit === 'usd' ? 'on' : ''}`} onClick={() => setUnit('usd')}>United States Dollar (USD)</button>
+          <button className={`unit-tab ${unit === 'pct' ? 'on' : ''}`} onClick={() => setUnit('pct')}>Return (%)</button>
+          <button className="unit-tab" disabled title="Needs per-trade stop-loss data — planned">R Multiple</button>
+        </div>
         <div className="spacer" />
         {d.issues.length > 0 && (
           <div className="banner" onClick={() => navigate('/patterns')}
             title={d.issues.join('\n')}>
-            <span className="dot">●</span> {d.issues.length} issue{d.issues.length > 1 ? 's' : ''} detected in your trading <span className="muted">›</span>
+            ✦ Edge check found <b>{d.issues.length} insight{d.issues.length > 1 ? 's' : ''}</b> in your journal <span className="muted">›</span>
           </div>
         )}
       </div>
@@ -194,63 +233,59 @@ export default function Overview({ dataVersion, onImport }) {
           {/* Top stat cards */}
           <div className="grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: 14 }}>
             <div className="panel">
-              <div className="stat-label">Net Return</div>
-              <div className={`stat-value ${d.totalPnl >= 0 ? 'pos' : 'neg'}`}>{money(d.totalPnl)}</div>
+              <div className="stat-label">Net Return {unit === 'usd' ? '($)' : '(%)'}</div>
+              <div className={`stat-value ${d.totalPnl >= 0 ? 'pos' : 'neg'}`}>{conv(d.totalPnl)}</div>
               <Sparkline data={d.equity} />
             </div>
-            <div className="panel row" style={{ gap: 14 }}>
-              <Donut segments={[
-                { value: d.counts.wins, color: 'var(--green)' },
-                { value: d.counts.be, color: '#9ca3af' },
-                { value: d.counts.losses, color: 'var(--red)' },
-              ]}>{fmt(d.winRate)}%</Donut>
-              <div>
-                <div className="stat-label">Winrate</div>
-                <div style={{ fontSize: 12, marginTop: 4 }}>
-                  <span className="pos">{d.counts.wins}</span> · <span className="muted">{d.counts.be}</span> · <span className="neg">{d.counts.losses}</span>
-                </div>
+            <div className="panel" style={{ textAlign: 'center' }}>
+              <div className="stat-label" style={{ textAlign: 'left' }}>Winrate</div>
+              <Gauge pct={d.winRate} />
+              <div style={{ fontWeight: 700, marginTop: -4 }}>{fmt(d.winRate)}%</div>
+              <div style={{ fontSize: 12, display: 'flex', justifyContent: 'space-around', marginTop: 2 }}>
+                <span className="pos">{d.counts.wins}</span>
+                <span className="muted">{d.counts.be}</span>
+                <span className="neg">{d.counts.losses}</span>
               </div>
             </div>
             <div className="panel">
-              <div className="stat-label">Avg P&L <span style={{ float: 'right', fontWeight: 700, color: 'var(--text)' }}>{ratio == null ? '—' : `${fmt(ratio)} : 1`}</span></div>
-              <div className={`stat-value ${d.expectancy >= 0 ? 'pos' : 'neg'}`}>{money(d.expectancy)}</div>
-              <div style={{ fontSize: 12 }}>
-                <span className="pos">{money(d.avgWin)}</span> <span className="neg" style={{ marginLeft: 6 }}>{money(d.avgLoss)}</span>
+              <div className="stat-label">Avg P&L {unit === 'usd' ? '($)' : '(%)'} <span style={{ float: 'right', fontWeight: 700, color: 'var(--text)' }}>{ratio == null ? '—' : `${fmt(ratio)}:1`}</span></div>
+              <div className={`stat-value ${d.expectancy >= 0 ? 'pos' : 'neg'}`}>{conv(d.expectancy)}</div>
+              <SplitBar win={d.avgWin} loss={d.avgLoss} />
+              <div style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                <span className="pos">{conv(d.avgWin)}</span>
+                <span className="neg">{conv(d.avgLoss)}</span>
               </div>
             </div>
             <div className="panel">
               <div className="stat-label">Profit Factor</div>
               <div className="stat-value">{fmt(d.profitFactor)}</div>
               <div className="pf-squares">
-                {[...Array(6)].map((_, i) => (
-                  <div key={i} className="pf-sq" style={i < pfFill ? {
-                    background: i < 2 ? 'var(--red)' : i < 4 ? '#f59e0b' : 'var(--green)',
-                  } : undefined} />
+                {[...Array(8)].map((_, i) => (
+                  <div key={i} className="pf-sq" style={i < pfFill ? { background: '#f59e0b' } : undefined} />
                 ))}
               </div>
             </div>
             <div className="panel row" style={{ gap: 14 }}>
-              <Donut segments={[
-                { value: d.score, color: scoreColor },
-                { value: 100 - d.score, color: '#f3f4f6' },
-              ]}>{d.score}</Donut>
               <div>
                 <div className="stat-label">Discipline Score</div>
-                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>revenge · sizing · limits</div>
+                <div className="stat-value">{d.score}</div>
+                <div className="muted" style={{ fontSize: 11 }}>revenge · sizing · limits</div>
               </div>
+              <div className="spacer" />
+              <Donut value={d.score} color={scoreColor} />
             </div>
           </div>
 
           {/* Calendar + evaluation */}
           <div className="grid" style={{ gridTemplateColumns: '2fr 1fr', marginBottom: 14, alignItems: 'start' }}>
-            <ProfitCalendar equity={d.equity} />
+            <ProfitCalendar equity={d.equity} conv={conv} />
             <div className="panel">
               <h2>Evaluation</h2>
               <div className="eval-row"><span className="k">Total Number of Trades</span><span className="v">{d.trades}</span></div>
-              <div className="eval-row"><span className="k">Avg. Profit per Trading Day</span><span className={`v ${d.avgProfitPerDay >= 0 ? 'pos' : 'neg'}`}>{money(d.avgProfitPerDay)}</span></div>
-              <div className="eval-row"><span className="k">Biggest Winner</span><span className="v pos">{money(d.biggestWin)}</span></div>
-              <div className="eval-row"><span className="k">Biggest Loser</span><span className="v neg">{money(d.biggestLoss)}</span></div>
-              <div className="eval-row"><span className="k">Total Fees</span><span className="v">{money(d.fees)}</span></div>
+              <div className="eval-row"><span className="k">Avg. Profit per Trading Day</span><span className={`v ${d.avgProfitPerDay >= 0 ? 'pos' : 'neg'}`}>{conv(d.avgProfitPerDay)}</span></div>
+              <div className="eval-row"><span className="k">Biggest Winner</span><span className="v pos">{conv(d.biggestWin)}</span></div>
+              <div className="eval-row"><span className="k">Biggest Loser</span><span className="v neg">{conv(d.biggestLoss)}</span></div>
+              <div className="eval-row"><span className="k">Total Fees</span><span className="v">{conv(d.fees)}</span></div>
               <div className="eval-row"><span className="k">Avg. Hold Time</span><span className="v">{holdFmt}</span></div>
               <div className="eval-row"><span className="k">Winrate w/o BE</span><span className="v">{d.winRateNoBe == null ? '—' : `${fmt(d.winRateNoBe)}%`}</span></div>
               <div className="eval-row"><span className="k">ROI</span><span className={`v ${d.roiPct >= 0 ? 'pos' : 'neg'}`}>{d.roiPct == null ? '—' : `${fmt(d.roiPct)}%`}</span></div>

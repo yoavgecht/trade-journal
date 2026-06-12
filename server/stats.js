@@ -252,6 +252,7 @@ export function dashboard() {
 
   return {
     ...sum,
+    startBalance: start,
     equity: eq,
     byDow: pat.byDow,
     counts: { wins: wins.length, losses: losses.length, be },
