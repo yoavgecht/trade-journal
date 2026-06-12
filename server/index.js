@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getSettings, setSetting, productMap } from './db.js';
 import { importCsv } from './importer.js';
-import { summary, equity, patterns, risk } from './stats.js';
+import { summary, equity, patterns, risk, dashboard } from './stats.js';
 
 const app = express();
 app.use(express.json());
@@ -25,6 +25,7 @@ app.post('/api/import', upload.array('files'), (req, res) => {
 });
 
 app.get('/api/summary', (_req, res) => res.json(summary()));
+app.get('/api/dashboard', (_req, res) => res.json(dashboard()));
 app.get('/api/equity', (_req, res) => res.json(equity()));
 app.get('/api/patterns', (_req, res) => res.json(patterns()));
 app.get('/api/risk', (_req, res) => res.json(risk()));

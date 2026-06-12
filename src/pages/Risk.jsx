@@ -35,7 +35,7 @@ export default function Risk({ dataVersion }) {
       </div>
 
       {r.breachedOn && (
-        <div className="panel" style={{ borderColor: '#f87171', marginBottom: 14 }}>
+        <div className="panel" style={{ borderColor: '#dc2626', marginBottom: 14 }}>
           ⚠️ The simulated threshold was BREACHED on {r.breachedOn} — by these rules that account is gone.
         </div>
       )}
@@ -47,12 +47,12 @@ export default function Risk({ dataVersion }) {
         ) : (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={r.series}>
-              <CartesianGrid stroke="#2a2f3e" strokeDasharray="3 3" />
-              <XAxis dataKey="date" stroke="#8b91a3" fontSize={11} />
-              <YAxis stroke="#8b91a3" fontSize={11} domain={['auto', 'auto']} tickFormatter={(v) => `$${v}`} />
-              <Tooltip contentStyle={{ background: '#181b24', border: '1px solid #2a2f3e' }} formatter={(v) => money(v)} />
-              <Line type="monotone" dataKey="balance" name="EOD balance" stroke="#60a5fa" dot={false} strokeWidth={2} />
-              <Line type="stepAfter" dataKey="threshold" name="Trailing threshold" stroke="#f87171" dot={false} strokeWidth={2} />
+              <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+              <XAxis dataKey="date" stroke="#6b7280" fontSize={11} />
+              <YAxis stroke="#6b7280" fontSize={11} domain={['auto', 'auto']} tickFormatter={(v) => `$${v}`} />
+              <Tooltip contentStyle={{ background: '#ffffff', border: '1px solid #e5e7eb' }} formatter={(v) => money(v)} />
+              <Line type="monotone" dataKey="balance" name="EOD balance" stroke="#2563eb" dot={false} strokeWidth={2} />
+              <Line type="stepAfter" dataKey="threshold" name="Trailing threshold" stroke="#dc2626" dot={false} strokeWidth={2} />
             </LineChart>
           </ResponsiveContainer>
         )}

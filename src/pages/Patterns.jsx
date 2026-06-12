@@ -11,14 +11,14 @@ function PnlBars({ data, xKey, xFormat }) {
   return (
     <ResponsiveContainer width="100%" height={200}>
       <BarChart data={data}>
-        <CartesianGrid stroke="#2a2f3e" strokeDasharray="3 3" />
-        <XAxis dataKey={xKey} stroke="#8b91a3" fontSize={11} tickFormatter={xFormat} />
-        <YAxis stroke="#8b91a3" fontSize={11} tickFormatter={(v) => `$${v}`} />
-        <Tooltip contentStyle={{ background: '#181b24', border: '1px solid #2a2f3e' }}
+        <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+        <XAxis dataKey={xKey} stroke="#6b7280" fontSize={11} tickFormatter={xFormat} />
+        <YAxis stroke="#6b7280" fontSize={11} tickFormatter={(v) => `$${v}`} />
+        <Tooltip contentStyle={{ background: '#ffffff', border: '1px solid #e5e7eb' }}
           formatter={(v) => money(v)} labelFormatter={xFormat} />
-        <ReferenceLine y={0} stroke="#8b91a3" />
+        <ReferenceLine y={0} stroke="#6b7280" />
         <Bar dataKey="pnl" name="P&L">
-          {data.map((d, i) => <Cell key={i} fill={d.pnl >= 0 ? '#34d399' : '#f87171'} />)}
+          {data.map((d, i) => <Cell key={i} fill={d.pnl >= 0 ? '#16a34a' : '#dc2626'} />)}
         </Bar>
       </BarChart>
     </ResponsiveContainer>

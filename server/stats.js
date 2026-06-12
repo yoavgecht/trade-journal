@@ -193,4 +193,92 @@ export function risk() {
   };
 }
 
+// Everything the Edgewonk-style home dashboard needs in one call.
+export function dashboard() {
+  const trades = allTrades();
+  const sum = summary();
+  const eq = equity();
+  const pat = patterns();
+  const start = parseFloat(getSettings().start_balance || '0');
+
+  const BE = 5; // |pnl| ≤ $5 counts as break-even (scratches/fees noise)
+  const wins = trades.filter((t) => t.pnl > BE);
+  const losses = trades.filter((t) => t.pnl < -BE);
+  const be = trades.length - wins.length - losses.length;
+
+  const holds = trades.filter((t) => t.duration_s != null);
+  const avgHoldS = holds.length ? holds.reduce((s, t) => s + t.duration_s, 0) / holds.length : null;
+
+  // Max drawdown % off the running equity peak (incl. start balance).
+  let peak = start, maxDdPct = 0;
+  for (const d of eq) {
+    const bal = start + d.cum;
+    peak = Math.max(peak, bal);
+    if (peak > 0) maxDdPct = Math.max(maxDdPct, ((peak - bal) / peak) * 100);
+  }
+
+  const weeks = new Set(eq.map((d) => isoWeek(d.date)));
+  const greenDays = eq.filter((d) => d.pnl > 0).length;
+  const redDays = eq.filter((d) => d.pnl < 0).length;
+
+  const last5 = trades.slice(-5).map((t) => (t.pnl > BE ? 'W' : t.pnl < -BE ? 'L' : 'B'));
+
+  // Discipline score 0-100: start perfect, lose points for the patterns that
+  // blow accounts — revenge share, sizing up after losses, trading past the
+  // daily limit, and red-day overtrading.
+  let score = 100;
+  if (trades.length) score -= Math.min(35, (pat.revenge.trades / trades.length) * 120);
+  if (pat.avgSizeAfterLoss != null && pat.avgSizeOther != null && pat.avgSizeOther > 0) {
+    score -= Math.min(20, Math.max(0, (pat.avgSizeAfterLoss / pat.avgSizeOther - 1) * 50));
+  }
+  if (eq.length) score -= Math.min(30, (pat.breachDays / eq.length) * 150);
+  if (pat.avgTradesRedDay != null && pat.avgTradesGreenDay > 0) {
+    score -= Math.min(15, Math.max(0, (pat.avgTradesRedDay / pat.avgTradesGreenDay - 1) * 20));
+  }
+  score = Math.max(0, Math.round(score));
+
+  // Plain-language issue list for the banner.
+  const issues = [];
+  if (pat.revenge.trades > 0 && (pat.revenge.avgPnl ?? 0) < (pat.nonRevenge.avgPnl ?? 0)) {
+    issues.push(`Quick re-entries after losses average ${pat.revenge.avgPnl < 0 ? '-' : ''}$${Math.abs(pat.revenge.avgPnl)} per trade`);
+  }
+  if (pat.avgSizeAfterLoss != null && pat.avgSizeOther != null && pat.avgSizeAfterLoss > pat.avgSizeOther * 1.15) {
+    issues.push('Position size grows right after losses');
+  }
+  if (pat.breachDays > 0) issues.push(`Daily loss limit breached on ${pat.breachDays} day(s), costing $${Math.abs(pat.lossAfterBreach)} past the breach`);
+  if (pat.avgTradesRedDay != null && pat.avgTradesGreenDay != null && pat.avgTradesRedDay > pat.avgTradesGreenDay * 1.3) {
+    issues.push('Red days have significantly more trades than green days');
+  }
+
+  return {
+    ...sum,
+    equity: eq,
+    byDow: pat.byDow,
+    counts: { wins: wins.length, losses: losses.length, be },
+    winRateNoBe: wins.length + losses.length ? r2((wins.length / (wins.length + losses.length)) * 100) : null,
+    biggestWin: trades.length ? r2(Math.max(...trades.map((t) => t.pnl))) : null,
+    biggestLoss: trades.length ? r2(Math.min(...trades.map((t) => t.pnl))) : null,
+    avgHoldS: avgHoldS == null ? null : Math.round(avgHoldS),
+    avgProfitPerDay: eq.length ? r2(sum.totalPnl / eq.length) : null,
+    roiPct: start > 0 ? r2((sum.totalPnl / start) * 100) : null,
+    maxDdPct: r2(maxDdPct),
+    greenDays,
+    redDays,
+    tradesPerDay: eq.length ? r2(trades.length / eq.length) : null,
+    tradesPerWeek: weeks.size ? r2(trades.length / weeks.size) : null,
+    last5,
+    score,
+    issues,
+  };
+}
+
+function isoWeek(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  const day = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - day + 3);
+  const firstThu = new Date(d.getFullYear(), 0, 4);
+  const week = 1 + Math.round(((d - firstThu) / 86400000 - 3 + ((firstThu.getDay() + 6) % 7)) / 7);
+  return `${d.getFullYear()}-W${week}`;
+}
+
 const r2 = (n) => Math.round(n * 100) / 100;
