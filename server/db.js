@@ -39,7 +39,18 @@ CREATE TABLE IF NOT EXISTS journals (
   min_profit_days INTEGER NOT NULL DEFAULT 0, -- qualifying days needed (payout)
   min_profit_day_amount REAL NOT NULL DEFAULT 0, -- $ that makes a day "qualifying"
   max_contracts INTEGER NOT NULL DEFAULT 0,   -- position-size cap (mini); 0 = none
+  min_payout REAL NOT NULL DEFAULT 0,         -- minimum payout request ($)
+  payout_cap REAL NOT NULL DEFAULT 0,         -- max $ per payout (account-size cap); 0 = none
+  max_payouts INTEGER NOT NULL DEFAULT 0,     -- payouts before moved to live; 0 = n/a
   created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS payouts (
+  id INTEGER PRIMARY KEY,
+  journal_id INTEGER NOT NULL REFERENCES journals(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,       -- YYYY-MM-DD (approval date; resets the qualifying-day cycle)
+  amount REAL NOT NULL,
+  note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS fills (
@@ -117,6 +128,9 @@ for (const [col, ddl] of [
   ['min_profit_days', 'min_profit_days INTEGER NOT NULL DEFAULT 0'],
   ['min_profit_day_amount', 'min_profit_day_amount REAL NOT NULL DEFAULT 0'],
   ['max_contracts', 'max_contracts INTEGER NOT NULL DEFAULT 0'],
+  ['min_payout', 'min_payout REAL NOT NULL DEFAULT 0'],
+  ['payout_cap', 'payout_cap REAL NOT NULL DEFAULT 0'],
+  ['max_payouts', 'max_payouts INTEGER NOT NULL DEFAULT 0'],
 ]) {
   if (jCols.length && !jCols.includes(col)) db.exec(`ALTER TABLE journals ADD COLUMN ${ddl}`);
 }

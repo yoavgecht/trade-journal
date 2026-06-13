@@ -23,6 +23,7 @@ export const PRESETS = {
     start_balance: 50000, profit_target: 0, trailing_dd: 2000,
     dd_stops_at_start: true, daily_loss_limit: 0,
     consistency_pct: 0, min_profit_days: 5, min_profit_day_amount: 150, max_contracts: 4,
+    min_payout: 500, payout_cap: 2000, max_payouts: 5,
   },
   'apex-50k-eval': {
     label: 'Apex 50K — Eval (verify)',

@@ -247,17 +247,56 @@ export function challenge(journalId) {
     };
   }
 
-  // --- Qualifying days (payout): days with pnl ≥ threshold ---
+  // --- Payout cycle: qualifying days RESET after every approved payout, so we
+  // only count days AFTER the last payout's date. ---
+  const payoutRows = db.prepare('SELECT date, amount, note FROM payouts WHERE journal_id = ? ORDER BY date, id').all(journalId);
+  const lastPayoutDate = payoutRows.length ? payoutRows[payoutRows.length - 1].date : null;
+  const cycleDays = eq.filter((d) => !lastPayoutDate || d.date > lastPayoutDate);
+  const cycleNet = cycleDays.reduce((s, d) => s + d.pnl, 0);
+
+  // --- Qualifying days (payout): days in THIS cycle with pnl ≥ threshold ---
   let qualifying = null;
   if (j.min_profit_days > 0) {
     const amt = j.min_profit_day_amount || 0;
-    const have = eq.filter((d) => d.pnl >= amt && d.pnl > 0).length;
+    const have = cycleDays.filter((d) => d.pnl >= amt && d.pnl > 0).length;
     qualifying = {
       need: j.min_profit_days,
       amount: amt,
       have,
       remaining: Math.max(0, j.min_profit_days - have),
       met: have >= j.min_profit_days,
+    };
+  }
+
+  // --- Payout readiness (funded phase) ---
+  let payout = null;
+  if (j.phase === 'funded' || payoutRows.length || j.min_payout || j.payout_cap || j.max_payouts) {
+    const taken = payoutRows.length;
+    const maxPayouts = j.max_payouts || 0;
+    const balance = rk.currentBalance;
+    const half = balance * 0.5;
+    const cap = j.payout_cap || 0;
+    const maxRequest = cap > 0 ? Math.min(half, cap) : half;
+    // You can only withdraw realized profit; also bounded by current-cycle net.
+    const available = Math.max(0, Math.min(maxRequest, cycleNet));
+    const minReq = j.min_payout || 0;
+    const daysOk = !qualifying || qualifying.met;
+    const eligible = !rk.breachedOn && daysOk && cycleNet > 0 && available >= minReq && (maxPayouts === 0 || taken < maxPayouts);
+    payout = {
+      taken,
+      maxPayouts,
+      remaining: maxPayouts > 0 ? Math.max(0, maxPayouts - taken) : null,
+      movedLive: maxPayouts > 0 && taken >= maxPayouts,
+      cycleNet: r2(cycleNet),
+      cycleNetPositive: cycleNet > 0,
+      lastPayoutDate,
+      minPayout: minReq,
+      payoutCap: cap,
+      maxRequest: r2(maxRequest),
+      available: r2(available),
+      eligible,
+      history: payoutRows,
+      totalPaid: r2(payoutRows.reduce((s, p) => s + p.amount, 0)),
     };
   }
 
@@ -305,6 +344,7 @@ export function challenge(journalId) {
     },
     consistency,
     qualifying,
+    payout,
     dailyLossLimit: dll,
     dllBreaches,
     roomToday: r2(roomToday),

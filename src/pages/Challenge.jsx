@@ -20,8 +20,20 @@ function Check({ ok, children }) {
 
 export default function Challenge({ dataVersion, journal }) {
   const [c, setC] = useState(null);
-  useEffect(() => { api('/challenge').then(setC); }, [dataVersion, journal.id]);
+  const [v, setV] = useState(0);
+  const [payDate, setPayDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [payAmt, setPayAmt] = useState('');
+  useEffect(() => { api('/challenge').then(setC); }, [dataVersion, journal.id, v]);
   if (!c) return null;
+
+  const logPayout = async () => {
+    const amount = parseFloat(payAmt);
+    if (Number.isNaN(amount)) return;
+    await api('/payouts', { method: 'POST', body: { date: payDate, amount, note: null } });
+    setPayAmt('');
+    setV((x) => x + 1);
+  };
+  const removePayout = async (pid) => { await api(`/payouts/${pid}`, { method: 'DELETE' }); setV((x) => x + 1); };
 
   const statusColor = c.status === 'passed' ? 'var(--green)' : c.status === 'failed' ? 'var(--red)' : '#f59e0b';
   const statusLabel = c.status === 'passed' ? (c.phase === 'funded' ? 'PAYOUT READY' : 'PASSED')
@@ -134,6 +146,62 @@ export default function Challenge({ dataVersion, journal }) {
           </Check>
         )}
       </div>
+
+      {/* Payout center (funded phase) */}
+      {c.payout && (
+        <div className="panel" style={{ marginBottom: 14 }}>
+          <div className="row" style={{ marginBottom: 10 }}>
+            <h2 style={{ margin: 0 }}>Payout center</h2>
+            <div className="spacer" />
+            {c.payout.movedLive
+              ? <span style={{ fontWeight: 800, color: 'var(--green)' }}>🎓 MOVED LIVE — {c.payout.taken} payouts taken</span>
+              : <span style={{ fontWeight: 700, color: c.payout.eligible ? 'var(--green)' : 'var(--muted)' }}>
+                  {c.payout.eligible ? '✅ Eligible to request a payout' : 'Not yet eligible'}
+                </span>}
+          </div>
+
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 10 }}>
+            <div><div className="stat-label">This cycle's profit</div><div className={`stat-value ${c.payout.cycleNet >= 0 ? 'pos' : 'neg'}`} style={{ fontSize: 18 }}>{money(c.payout.cycleNet)}</div></div>
+            <div><div className="stat-label">Available to request</div><div className="stat-value" style={{ fontSize: 18 }}>{money(c.payout.available)}</div></div>
+            <div><div className="stat-label">Request bounds</div><div style={{ fontWeight: 600, marginTop: 4 }}>{money(c.payout.minPayout)} – {money(c.payout.maxRequest)}</div><div className="muted" style={{ fontSize: 11 }}>50% of balance{c.payout.payoutCap ? `, cap ${money(c.payout.payoutCap)}` : ''}</div></div>
+            <div><div className="stat-label">Payouts taken</div><div className="stat-value" style={{ fontSize: 18 }}>{c.payout.taken}{c.payout.maxPayouts ? ` / ${c.payout.maxPayouts}` : ''}</div>{c.payout.remaining != null && <div className="muted" style={{ fontSize: 11 }}>{c.payout.remaining} until live</div>}</div>
+          </div>
+
+          {/* Cycle requirements */}
+          <Check ok={!c.qualifying || c.qualifying.met}>
+            <div className="row"><b>5 qualifying days this cycle (≥ {money(c.qualifying?.amount || 0)})</b><div className="spacer" />
+              <span>{c.qualifying ? `${c.qualifying.have} / ${c.qualifying.need}` : '—'}</span></div>
+          </Check>
+          <Check ok={c.payout.cycleNetPositive}>
+            <div className="row"><b>Positive net profit this cycle</b><div className="spacer" /><span>{money(c.payout.cycleNet)}</span></div>
+          </Check>
+          {c.payout.lastPayoutDate && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Cycle counts days after your last payout ({c.payout.lastPayoutDate}).</div>}
+
+          {/* Log a payout */}
+          {!c.payout.movedLive && (
+            <div className="row" style={{ marginTop: 12 }}>
+              <span className="muted">Log a payout:</span>
+              <input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+              <input type="number" placeholder={`$ (max ${money(c.payout.maxRequest)})`} value={payAmt}
+                onChange={(e) => setPayAmt(e.target.value)} style={{ width: 150 }} />
+              <button onClick={logPayout} disabled={!payAmt}>Record payout</button>
+            </div>
+          )}
+
+          {c.payout.history.length > 0 && (
+            <table style={{ marginTop: 12 }}>
+              <thead><tr><th>Date</th><th>Amount</th><th></th></tr></thead>
+              <tbody>
+                {c.payout.history.map((p) => (
+                  <tr key={p.id}><td>{p.date}</td><td className="pos">{money(p.amount)}</td>
+                    <td style={{ textAlign: 'right' }}><button className="ghost" style={{ padding: '3px 8px', fontSize: 11 }} onClick={() => removePayout(p.id)}>remove</button></td></tr>
+                ))}
+                <tr><td><b>Total paid out</b></td><td className="pos"><b>{money(c.payout.totalPaid)}</b></td><td></td></tr>
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       <div className="muted" style={{ fontSize: 12 }}>
         Day-granularity from imported trades + manual days. Drawdown is simulated end-of-day (intraday swings between

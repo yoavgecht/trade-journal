@@ -36,9 +36,11 @@ app.post('/api/journals', (req, res) => {
   if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'name required' });
   const r = db.prepare(`INSERT INTO journals
     (name, start_balance, trailing_dd, daily_loss_limit, dd_stops_at_start, deposit_date,
-     firm, phase, profit_target, consistency_pct, consistency_cushion_pct, min_profit_days, min_profit_day_amount, max_contracts)
+     firm, phase, profit_target, consistency_pct, consistency_cushion_pct, min_profit_days, min_profit_day_amount, max_contracts,
+     min_payout, payout_cap, max_payouts)
     VALUES (@name, @start_balance, @trailing_dd, @daily_loss_limit, @dd_stops_at_start, @deposit_date,
-     @firm, @phase, @profit_target, @consistency_pct, @consistency_cushion_pct, @min_profit_days, @min_profit_day_amount, @max_contracts)`).run({
+     @firm, @phase, @profit_target, @consistency_pct, @consistency_cushion_pct, @min_profit_days, @min_profit_day_amount, @max_contracts,
+     @min_payout, @payout_cap, @max_payouts)`).run({
     name: String(b.name).trim(),
     start_balance: Number(b.start_balance ?? 50000),
     trailing_dd: Number(b.trailing_dd ?? 2500),
@@ -53,6 +55,9 @@ app.post('/api/journals', (req, res) => {
     min_profit_days: Number(b.min_profit_days ?? 0),
     min_profit_day_amount: Number(b.min_profit_day_amount ?? 0),
     max_contracts: Number(b.max_contracts ?? 0),
+    min_payout: Number(b.min_payout ?? 0),
+    payout_cap: Number(b.payout_cap ?? 0),
+    max_payouts: Number(b.max_payouts ?? 0),
   });
   res.json(getJournal(r.lastInsertRowid));
 });
@@ -62,7 +67,7 @@ app.patch('/api/journals/:id', (req, res) => {
   if (!j) return res.status(404).json({ error: 'no such journal' });
   const allowed = ['name', 'start_balance', 'trailing_dd', 'daily_loss_limit', 'dd_stops_at_start',
     'deposit_date', 'firm', 'phase', 'profit_target', 'consistency_pct', 'consistency_cushion_pct',
-    'min_profit_days', 'min_profit_day_amount', 'max_contracts'];
+    'min_profit_days', 'min_profit_day_amount', 'max_contracts', 'min_payout', 'payout_cap', 'max_payouts'];
   for (const k of allowed) {
     if (k in (req.body || {})) {
       db.prepare(`UPDATE journals SET ${k} = ? WHERE id = ?`).run(req.body[k], j.id);
@@ -192,6 +197,27 @@ app.delete('/api/days/:date', (req, res) => {
   const id = journalId(req, res);
   if (!id) return;
   db.prepare('DELETE FROM manual_days WHERE journal_id = ? AND date = ?').run(id, req.params.date);
+  res.json({ ok: true });
+});
+
+// --- payouts (funded phase; each resets the qualifying-day cycle) -------------
+app.get('/api/payouts', (req, res) => {
+  const id = journalId(req, res);
+  if (id) res.json(db.prepare('SELECT * FROM payouts WHERE journal_id = ? ORDER BY date, id').all(id));
+});
+
+app.post('/api/payouts', (req, res) => {
+  const id = journalId(req, res);
+  if (!id) return;
+  const { date, amount, note = null } = req.body || {};
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return res.status(400).json({ error: 'date YYYY-MM-DD required' });
+  if (typeof amount !== 'number' || Number.isNaN(amount)) return res.status(400).json({ error: 'amount (number) required' });
+  db.prepare('INSERT INTO payouts (journal_id, date, amount, note) VALUES (?, ?, ?, ?)').run(id, date, amount, note);
+  res.json({ ok: true });
+});
+
+app.delete('/api/payouts/:pid', (req, res) => {
+  db.prepare('DELETE FROM payouts WHERE id = ?').run(Number(req.params.pid));
   res.json({ ok: true });
 });
 

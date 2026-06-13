@@ -35,6 +35,9 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
         min_profit_days: Number(form.min_profit_days),
         min_profit_day_amount: Number(form.min_profit_day_amount),
         max_contracts: Number(form.max_contracts),
+        min_payout: Number(form.min_payout || 0),
+        payout_cap: Number(form.payout_cap || 0),
+        max_payouts: Number(form.max_payouts || 0),
         dd_stops_at_start: form.dd_stops_at_start ? 1 : 0,
       },
     });
@@ -124,6 +127,20 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
           <div className="field">
             <label>…each day ≥ ($)</label>
             <input type="number" value={form.min_profit_day_amount} onChange={(e) => set('min_profit_day_amount', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Min payout request ($)</label>
+            <input type="number" value={form.min_payout ?? 0} onChange={(e) => set('min_payout', e.target.value)} />
+          </div>
+        </div>
+        <div className="field-row" style={{ maxWidth: 720 }}>
+          <div className="field">
+            <label>Payout cap ($, 0=none)</label>
+            <input type="number" value={form.payout_cap ?? 0} onChange={(e) => set('payout_cap', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Max payouts → live (0=n/a)</label>
+            <input type="number" value={form.max_payouts ?? 0} onChange={(e) => set('max_payouts', e.target.value)} />
           </div>
           <div className="field" />
         </div>
