@@ -68,8 +68,11 @@ export default function Challenge({ dataVersion, journal }) {
         </div>
         <div className="panel">
           <div className="stat-label">Safe to lose TODAY</div>
-          <div className="stat-value">{money(c.roomToday)}</div>
-          <div className="muted" style={{ fontSize: 12 }}>{c.dailyLossLimit > 0 ? `min(drawdown, ${money(c.dailyLossLimit)} DLL)` : 'to the trailing threshold'}</div>
+          <div className="stat-value" style={{ color: c.roomToday < (c.dailyLossLimit || c.drawdown.trailingDd) * 0.35 ? 'var(--red)' : undefined }}>{money(c.roomToday)}</div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            {c.todayPnl !== 0 && <>today so far: <span className={c.todayPnl >= 0 ? 'pos' : 'neg'}>{money(c.todayPnl)}</span> · </>}
+            {c.dailyLossLimit > 0 ? `${money(c.dailyLossLimit)} daily limit` : 'to trailing threshold'}
+          </div>
         </div>
         <div className="panel">
           <div className="stat-label">Trailing threshold</div>

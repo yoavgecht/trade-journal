@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api, money } from '../api.js';
 
 export const MISTAKES = [
@@ -20,6 +20,7 @@ export default function TradePanel({ trade, onClose, onSaved }) {
   const [rating, setRating] = useState(trade.rating || 0);
   const [shots, setShots] = useState(() => parseJsonArr(trade.screenshots));
   const [saving, setSaving] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef();
 
   const toggleMistake = (m) =>
@@ -36,14 +37,26 @@ export default function TradePanel({ trade, onClose, onSaved }) {
     onClose();
   };
 
-  const uploadShots = async (files) => {
-    if (!files?.length) return;
+  const uploadShots = async (fileList) => {
+    const files = [...(fileList || [])].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) return;
     const fd = new FormData();
     for (const f of files) fd.append('files', f);
     const r = await api(`/trades/${trade.id}/screenshots`, { method: 'POST', body: fd });
     setShots(r.screenshots);
     onSaved();
   };
+
+  // Paste a screenshot straight in (Cmd+Shift+4 then Cmd+V) while the panel is open.
+  useEffect(() => {
+    const onPaste = (e) => {
+      const imgs = [...(e.clipboardData?.items || [])]
+        .filter((i) => i.type.startsWith('image/')).map((i) => i.getAsFile()).filter(Boolean);
+      if (imgs.length) { e.preventDefault(); uploadShots(imgs); }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [trade.id]);
 
   const removeShot = async (name) => {
     const r = await api(`/trades/${trade.id}/screenshots/${name}`, { method: 'DELETE' });
@@ -98,7 +111,7 @@ export default function TradePanel({ trade, onClose, onSaved }) {
         </div>
 
         <div className="field">
-          <label>Screenshots ({shots.length}/2)</label>
+          <label>Screenshots ({shots.length}/2) — drag in, paste (⌘V), or click</label>
           <div className="shot-grid">
             {shots.map((name) => (
               <div key={name} className="shot">
@@ -108,8 +121,14 @@ export default function TradePanel({ trade, onClose, onSaved }) {
               </div>
             ))}
             {shots.length < 2 && (
-              <div className="shot-add" onClick={() => fileRef.current.click()}>
-                ＋ Add screenshot
+              <div
+                className={`shot-add ${dragOver ? 'over' : ''}`}
+                onClick={() => fileRef.current.click()}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => { e.preventDefault(); setDragOver(false); uploadShots(e.dataTransfer.files); }}
+              >
+                {dragOver ? 'Drop it' : '＋ Add screenshot'}
               </div>
             )}
           </div>

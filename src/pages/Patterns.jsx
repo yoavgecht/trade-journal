@@ -25,30 +25,55 @@ function PnlBars({ data, xKey, xFormat }) {
   );
 }
 
-function Compare({ title, a, b, aLabel, bLabel, verdict }) {
-  return (
-    <div className="panel">
-      <h2>{title}</h2>
-      <table>
-        <thead><tr><th></th><th>{aLabel}</th><th>{bLabel}</th></tr></thead>
-        <tbody>
-          <tr><td>Trades</td><td>{a.trades}</td><td>{b.trades}</td></tr>
-          <tr><td>Win rate</td><td>{a.winRate == null ? '—' : `${a.winRate}%`}</td><td>{b.winRate == null ? '—' : `${b.winRate}%`}</td></tr>
-          <tr>
-            <td>Avg P&L / trade</td>
-            <td className={a.avgPnl >= 0 ? 'pos' : 'neg'}>{money(a.avgPnl)}</td>
-            <td className={b.avgPnl >= 0 ? 'pos' : 'neg'}>{money(b.avgPnl)}</td>
-          </tr>
-          <tr>
-            <td>Total P&L</td>
-            <td className={a.pnl >= 0 ? 'pos' : 'neg'}>{money(a.pnl)}</td>
-            <td className={b.pnl >= 0 ? 'pos' : 'neg'}>{money(b.pnl)}</td>
-          </tr>
-        </tbody>
-      </table>
-      {verdict && <div className="muted" style={{ marginTop: 8 }}>{verdict}</div>}
-    </div>
-  );
+// Builds ranked plain-language findings from the patterns payload. Each is
+// {tone: 'bad'|'good'|'info', text}. Only emits a finding when there's enough
+// data to mean something.
+function buildFindings(p, totalTrades) {
+  const out = [];
+  const r = p.revenge, n = p.nonRevenge;
+
+  if (r.trades >= 2 && n.avgPnl != null && r.avgPnl != null && r.avgPnl < n.avgPnl) {
+    out.push({ tone: 'bad', cost: r.pnl,
+      text: `Revenge trading is costing you. ${r.trades} trades taken within 5 min of a loss averaged ${money(r.avgPnl)} each (vs ${money(n.avgPnl)} otherwise) — ${money(r.pnl)} total. After a loss, step away before re-entering.` });
+  }
+  if (p.avgSizeAfterLoss != null && p.avgSizeOther != null && p.avgSizeOther > 0 && p.avgSizeAfterLoss > p.avgSizeOther * 1.15) {
+    out.push({ tone: 'bad',
+      text: `You size UP after losses — ${fmt(p.avgSizeAfterLoss)} contracts vs ${fmt(p.avgSizeOther)} normally. That's how a bad day becomes a blown account. Keep size fixed regardless of the last result.` });
+  }
+  if (p.breachDays > 0) {
+    out.push({ tone: 'bad', cost: p.lossAfterBreach,
+      text: `On ${p.breachDays} day(s) you traded PAST your daily loss limit, losing ${money(p.lossAfterBreach)} after the breach point. When the day's limit hits, stop.` });
+  }
+  if (p.avgTradesRedDay != null && p.avgTradesGreenDay != null && p.avgTradesRedDay > p.avgTradesGreenDay * 1.3) {
+    out.push({ tone: 'bad',
+      text: `Losing days are overtrading days — ${fmt(p.avgTradesRedDay)} trades on red days vs ${fmt(p.avgTradesGreenDay)} on green. More trades when it's not working digs the hole deeper.` });
+  }
+
+  // Worst / best hour and weekday (need ≥3 trades in the bucket to matter).
+  const hours = p.byHour.filter((h) => h.trades >= 3);
+  if (hours.length) {
+    const worst = hours.reduce((a, b) => (b.pnl < a.pnl ? b : a));
+    if (worst.pnl < 0) out.push({ tone: 'info', cost: worst.pnl,
+      text: `Your worst hour is ${worst.hour}:00 — ${money(worst.pnl)} over ${worst.trades} trades. Worth asking what you're trading then.` });
+    const best = hours.reduce((a, b) => (b.pnl > a.pnl ? b : a));
+    if (best.pnl > 0 && best.hour !== worst.hour) out.push({ tone: 'good',
+      text: `Your best hour is ${best.hour}:00 — ${money(best.pnl)} over ${best.trades} trades. Lean into it.` });
+  }
+  const dows = p.byDow.filter((d) => d.trades >= 3);
+  if (dows.length) {
+    const worst = dows.reduce((a, b) => (b.pnl < a.pnl ? b : a));
+    if (worst.pnl < 0) out.push({ tone: 'info', cost: worst.pnl,
+      text: `${DOW[worst.dow]} is your worst day — ${money(worst.pnl)} over ${worst.trades} trades.` });
+  }
+
+  if (p.mistakeTags.length) {
+    const worst = p.mistakeTags[0]; // already sorted most-negative first
+    if (worst.pnl < 0) out.push({ tone: 'bad', cost: worst.pnl,
+      text: `Your most expensive tagged mistake is "${worst.tag}" — ${money(worst.pnl)} across ${worst.trades} trades.` });
+  }
+
+  // Sort: bad first, then by dollar cost (most negative first).
+  return out.sort((a, b) => (a.tone === 'bad' ? -1 : 1) - (b.tone === 'bad' ? -1 : 1) || (a.cost ?? 0) - (b.cost ?? 0));
 }
 
 export default function Patterns({ dataVersion }) {
@@ -56,22 +81,42 @@ export default function Patterns({ dataVersion }) {
   useEffect(() => { api('/patterns').then(setP); }, [dataVersion]);
   if (!p) return null;
 
-  const revenge = p.revenge, normal = p.nonRevenge;
-  const revengeVerdict = revenge.trades === 0
-    ? 'No revenge-pattern trades detected (entered within 5 min of a losing exit).'
-    : revenge.avgPnl < (normal.avgPnl ?? 0)
-      ? `⚠️ Trades fired within 5 minutes of a loss average ${money(revenge.avgPnl)} vs ${money(normal.avgPnl)} otherwise — that pause matters.`
-      : 'Quick re-entries after losses are not hurting you so far.';
-
-  const sizeVerdict = p.avgSizeAfterLoss != null && p.avgSizeOther != null
-    ? p.avgSizeAfterLoss > p.avgSizeOther * 1.15
-      ? `⚠️ Average size after a loss is ${fmt(p.avgSizeAfterLoss)} vs ${fmt(p.avgSizeOther)} otherwise — you size UP after losing.`
-      : `Size after a loss (${fmt(p.avgSizeAfterLoss)}) stays in line with normal (${fmt(p.avgSizeOther)}).`
-    : null;
+  const totalTrades = p.revenge.trades + p.nonRevenge.trades;
+  const findings = buildFindings(p, totalTrades);
 
   return (
     <>
       <h1>Patterns</h1>
+
+      {totalTrades < 10 && (
+        <div className="infobox" style={{ marginBottom: 14 }}>
+          Only {totalTrades} trade{totalTrades !== 1 ? 's' : ''} so far — patterns get reliable around 20+. Findings below are early reads, not conclusions.
+        </div>
+      )}
+
+      {/* Plain-language findings */}
+      <div className="panel" style={{ marginBottom: 14 }}>
+        <h2>What the data is telling you</h2>
+        {findings.length === 0 ? (
+          <div className="muted">
+            {totalTrades === 0
+              ? 'No trades yet. Import a Tradovate CSV (Import Trades) and findings will appear here.'
+              : 'No problem patterns detected yet — nothing screaming for attention. Keep logging trades and tagging mistakes.'}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {findings.map((f, i) => (
+              <div key={i} className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
+                <span style={{ fontSize: 15, lineHeight: '20px' }}>
+                  {f.tone === 'bad' ? '🔴' : f.tone === 'good' ? '🟢' : '🔎'}
+                </span>
+                <span style={{ flex: 1 }}>{f.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 14 }}>
         <div className="panel">
           <h2>P&L by hour of day</h2>
@@ -83,40 +128,25 @@ export default function Patterns({ dataVersion }) {
         </div>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 14 }}>
-        <Compare title="Revenge trading (entry ≤5 min after a loss)"
-          a={revenge} b={normal} aLabel="After-loss quick entries" bLabel="All other trades"
-          verdict={revengeVerdict} />
-        <div className="panel">
-          <h2>Discipline</h2>
-          <table>
-            <tbody>
-              <tr><td>Avg size after a loss</td><td>{fmt(p.avgSizeAfterLoss)}</td></tr>
-              <tr><td>Avg size otherwise</td><td>{fmt(p.avgSizeOther)}</td></tr>
-              <tr><td>Avg trades on green days</td><td>{fmt(p.avgTradesGreenDay)}</td></tr>
-              <tr><td>Avg trades on red days</td><td>{fmt(p.avgTradesRedDay)}</td></tr>
-              <tr><td>Days personal loss limit (${fmt(p.dailyLossLimit)}) was breached</td><td>{p.breachDays}</td></tr>
-              <tr>
-                <td>P&L from trading PAST the breach</td>
-                <td className={p.lossAfterBreach >= 0 ? 'pos' : 'neg'}>{money(p.lossAfterBreach)}</td>
-              </tr>
-            </tbody>
-          </table>
-          {sizeVerdict && <div className="muted" style={{ marginTop: 8 }}>{sizeVerdict}</div>}
-          {p.avgTradesRedDay != null && p.avgTradesGreenDay != null && p.avgTradesRedDay > p.avgTradesGreenDay * 1.3 && (
-            <div className="muted" style={{ marginTop: 4 }}>
-              ⚠️ Red days average {fmt(p.avgTradesRedDay)} trades vs {fmt(p.avgTradesGreenDay)} on green days — losing days are also overtrading days.
-            </div>
-          )}
-        </div>
+      <div className="panel" style={{ marginBottom: 14 }}>
+        <h2>Discipline</h2>
+        <table style={{ maxWidth: 520 }}>
+          <tbody>
+            <tr><td>Revenge trades (≤5 min after a loss)</td><td>{p.revenge.trades}</td><td className={p.revenge.pnl >= 0 ? 'pos' : 'neg'}>{money(p.revenge.pnl)}</td></tr>
+            <tr><td>All other trades</td><td>{p.nonRevenge.trades}</td><td className={p.nonRevenge.pnl >= 0 ? 'pos' : 'neg'}>{money(p.nonRevenge.pnl)}</td></tr>
+            <tr><td>Avg size after a loss</td><td colSpan={2}>{fmt(p.avgSizeAfterLoss)} (vs {fmt(p.avgSizeOther)} normally)</td></tr>
+            <tr><td>Avg trades — red vs green days</td><td colSpan={2}>{fmt(p.avgTradesRedDay)} red / {fmt(p.avgTradesGreenDay)} green</td></tr>
+            <tr><td>Days past the daily loss limit ({money(p.dailyLossLimit)})</td><td>{p.breachDays}</td><td className={p.lossAfterBreach >= 0 ? 'pos' : 'neg'}>{money(p.lossAfterBreach)}</td></tr>
+          </tbody>
+        </table>
       </div>
 
       <div className="panel">
         <h2>Cost of tagged mistakes</h2>
         {p.mistakeTags.length === 0 ? (
-          <div className="muted">Tag mistakes on trades (Trades tab) and their dollar cost shows up here.</div>
+          <div className="muted">Tag mistakes on trades (click a trade → Mistakes) and their dollar cost shows up here, ranked.</div>
         ) : (
-          <table>
+          <table style={{ maxWidth: 460 }}>
             <thead><tr><th>Mistake</th><th>Trades</th><th>P&L</th></tr></thead>
             <tbody>
               {p.mistakeTags.map((m) => (

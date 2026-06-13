@@ -304,9 +304,16 @@ export function challenge(journalId) {
   const dll = j.daily_loss_limit || 0;
   const dllBreaches = dll > 0 ? eq.filter((d) => d.pnl <= -dll).length : 0;
 
-  // --- Room today: most you can lose before breaching the trailing threshold,
-  // capped by the daily loss limit. The pre-trade "stop for the day" number. ---
-  const roomToday = dll > 0 ? Math.min(rk.distance, dll) : rk.distance;
+  // --- Room today: most you can STILL lose right now before (a) breaching the
+  // trailing threshold or (b) hitting the daily loss limit — whichever is
+  // closer. Subtracts what you've already lost TODAY, so it's a live "stop for
+  // the day" number, not a fresh-session figure. ---
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayRow = eq.find((d) => d.date === todayKey);
+  const todayPnl = todayRow ? todayRow.pnl : 0;
+  const todayLoss = Math.max(0, -todayPnl);
+  const dllRoom = dll > 0 ? Math.max(0, dll - todayLoss) : Infinity;
+  const roomToday = Math.min(rk.distance, dllRoom);
 
   // --- Overall verdict ---
   const consistencyOk = !consistency || consistency.compliant;
@@ -347,6 +354,7 @@ export function challenge(journalId) {
     payout,
     dailyLossLimit: dll,
     dllBreaches,
+    todayPnl: r2(todayPnl),
     roomToday: r2(roomToday),
     tradingDays: eq.length,
     status,
