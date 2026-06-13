@@ -1,28 +1,36 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
 import Overview from './pages/Overview.jsx';
+import Challenge from './pages/Challenge.jsx';
 import Patterns from './pages/Patterns.jsx';
 import Risk from './pages/Risk.jsx';
 import Trades from './pages/Trades.jsx';
 import Settings from './pages/Settings.jsx';
 import { api, setActiveJournalId } from './api.js';
+import { PRESETS } from './presets.js';
 
-// First-run "Create a Journal" (Edgewonk-style). Markets are fixed: this tool
-// is built for NQ/ES futures prop accounts only.
+// First-run "Create a Journal" (Edgewonk-style). Markets are fixed to NQ/ES
+// futures. A firm preset pre-fills the challenge rules; everything stays
+// editable (the Challenge page reads these to score pass/payout progress).
 function CreateJournalModal({ onCreated, onClose, blocking }) {
   const [name, setName] = useState('');
-  const [balance, setBalance] = useState(50000);
-  const [dd, setDd] = useState(2500);
-  const [limit, setLimit] = useState(1000);
+  const [presetKey, setPresetKey] = useState('lucid-50k-eod');
+  const [r, setR] = useState({ ...PRESETS['lucid-50k-eod'] });
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
+
+  const applyPreset = (key) => {
+    setPresetKey(key);
+    setR({ ...PRESETS[key] });
+  };
+  const set = (k, v) => setR((cur) => ({ ...cur, [k]: v }));
 
   const create = async () => {
     if (!name.trim()) return;
     setBusy(true);
     const j = await api('/journals', {
       method: 'POST',
-      body: { name: name.trim(), start_balance: balance, trailing_dd: dd, daily_loss_limit: limit, deposit_date: date },
+      body: { name: name.trim(), deposit_date: date, ...r },
     });
     setBusy(false);
     onCreated(j);
@@ -37,17 +45,30 @@ function CreateJournalModal({ onCreated, onClose, blocking }) {
         <div className="field">
           <label>Journal Name</label>
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Apex 50k Eval #1" onKeyDown={(e) => e.key === 'Enter' && create()} />
+            placeholder="e.g. Lucid 50k Eval #1" onKeyDown={(e) => e.key === 'Enter' && create()} />
         </div>
-        <div className="field">
-          <label>Markets</label>
-          <span className="market-chip">Futures — NQ / ES (+ micros)</span>
+        <div className="field-row">
+          <div className="field">
+            <label>Firm preset</label>
+            <select value={presetKey} onChange={(e) => applyPreset(e.target.value)}>
+              {Object.entries(PRESETS).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Markets</label>
+            <div style={{ paddingTop: 4 }}><span className="market-chip">Futures — NQ / ES</span></div>
+          </div>
         </div>
-        <h2 style={{ marginTop: 16 }}>Account</h2>
+
+        <h2 style={{ marginTop: 16 }}>Account & Rules</h2>
         <div className="field-row">
           <div className="field">
             <label>Account Size ($)</label>
-            <input type="number" value={balance} onChange={(e) => setBalance(Number(e.target.value))} />
+            <input type="number" value={r.start_balance} onChange={(e) => set('start_balance', Number(e.target.value))} />
+          </div>
+          <div className="field">
+            <label>Profit Target ($)</label>
+            <input type="number" value={r.profit_target} onChange={(e) => set('profit_target', Number(e.target.value))} />
           </div>
           <div className="field">
             <label>Start Date</label>
@@ -56,15 +77,40 @@ function CreateJournalModal({ onCreated, onClose, blocking }) {
         </div>
         <div className="field-row">
           <div className="field">
-            <label>Trailing Drawdown ($)</label>
-            <input type="number" value={dd} onChange={(e) => setDd(Number(e.target.value))} />
+            <label>Max Drawdown ($)</label>
+            <input type="number" value={r.trailing_dd} onChange={(e) => set('trailing_dd', Number(e.target.value))} />
           </div>
           <div className="field">
-            <label>Personal Daily Loss Limit ($)</label>
-            <input type="number" value={limit} onChange={(e) => setLimit(Number(e.target.value))} />
+            <label>Daily Loss Limit ($, 0=none)</label>
+            <input type="number" value={r.daily_loss_limit} onChange={(e) => set('daily_loss_limit', Number(e.target.value))} />
+          </div>
+          <div className="field">
+            <label>Consistency (%, 0=none)</label>
+            <input type="number" value={r.consistency_pct} onChange={(e) => set('consistency_pct', Number(e.target.value))} />
           </div>
         </div>
-        <div className="row" style={{ marginTop: 16 }}>
+        <div className="field-row">
+          <div className="field">
+            <label>Payout: qualifying days</label>
+            <input type="number" value={r.min_profit_days} onChange={(e) => set('min_profit_days', Number(e.target.value))} />
+          </div>
+          <div className="field">
+            <label>…each day ≥ ($)</label>
+            <input type="number" value={r.min_profit_day_amount} onChange={(e) => set('min_profit_day_amount', Number(e.target.value))} />
+          </div>
+          <div className="field">
+            <label>Max contracts (mini)</label>
+            <input type="number" value={r.max_contracts} onChange={(e) => set('max_contracts', Number(e.target.value))} />
+          </div>
+        </div>
+        <label className="muted" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+          <input type="checkbox" checked={!!r.dd_stops_at_start}
+            onChange={(e) => set('dd_stops_at_start', e.target.checked)} />
+          {' '}Drawdown stops trailing at starting balance (Apex/Lucid PA style)
+        </label>
+        <div className="infobox">Presets are a starting point — verify against your firm's current rules.</div>
+
+        <div className="row" style={{ marginTop: 8 }}>
           <button onClick={create} disabled={busy || !name.trim()}>Create Journal</button>
           {!blocking && <button className="ghost" onClick={onClose}>Cancel</button>}
         </div>
@@ -188,6 +234,7 @@ export default function App() {
         </div>
         <div style={{ marginTop: 16 }}>
           <NavLink className="nav-link" to="/" end>Home</NavLink>
+          <NavLink className="nav-link" to="/challenge">Challenge</NavLink>
           <NavLink className="nav-link" to="/patterns">Patterns</NavLink>
           <NavLink className="nav-link" to="/risk">Risk</NavLink>
           <NavLink className="nav-link" to="/trades">Trades</NavLink>
@@ -202,6 +249,7 @@ export default function App() {
         {active && (
           <Routes>
             <Route path="/" element={<Overview dataVersion={dataVersion} journal={active} onOpenImport={() => setShowImport(true)} />} />
+            <Route path="/challenge" element={<Challenge dataVersion={dataVersion} journal={active} />} />
             <Route path="/patterns" element={<Patterns dataVersion={dataVersion} />} />
             <Route path="/risk" element={<Risk dataVersion={dataVersion} />} />
             <Route path="/trades" element={<Trades dataVersion={dataVersion} />} />

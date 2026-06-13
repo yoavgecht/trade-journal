@@ -30,6 +30,14 @@ CREATE TABLE IF NOT EXISTS journals (
   dd_stops_at_start INTEGER NOT NULL DEFAULT 1,
   daily_loss_limit REAL NOT NULL DEFAULT 1000,
   deposit_date TEXT,
+  -- Challenge / payout rules (Apex / Lucid / MFFU evals + funded):
+  firm TEXT,                                  -- label only (Lucid / Apex / MFFU…)
+  phase TEXT DEFAULT 'eval',                  -- eval | funded
+  profit_target REAL NOT NULL DEFAULT 3000,   -- pass target ($); 0 = none (live)
+  consistency_pct REAL NOT NULL DEFAULT 0,    -- best-day cap as % of total; 0 = none
+  min_profit_days INTEGER NOT NULL DEFAULT 0, -- qualifying days needed (payout)
+  min_profit_day_amount REAL NOT NULL DEFAULT 0, -- $ that makes a day "qualifying"
+  max_contracts INTEGER NOT NULL DEFAULT 0,   -- position-size cap (mini); 0 = none
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -95,6 +103,20 @@ CREATE TABLE IF NOT EXISTS products (
 const metaCols = db.prepare("SELECT name FROM pragma_table_info('trade_meta')").all().map((c) => c.name);
 if (metaCols.length && !metaCols.includes('screenshots')) {
   db.exec('ALTER TABLE trade_meta ADD COLUMN screenshots TEXT');
+}
+
+// Pre-challenge journals: add the rule columns in place (journals are precious).
+const jCols = db.prepare("SELECT name FROM pragma_table_info('journals')").all().map((c) => c.name);
+for (const [col, ddl] of [
+  ['firm', 'firm TEXT'],
+  ['phase', "phase TEXT DEFAULT 'eval'"],
+  ['profit_target', 'profit_target REAL NOT NULL DEFAULT 3000'],
+  ['consistency_pct', 'consistency_pct REAL NOT NULL DEFAULT 0'],
+  ['min_profit_days', 'min_profit_days INTEGER NOT NULL DEFAULT 0'],
+  ['min_profit_day_amount', 'min_profit_day_amount REAL NOT NULL DEFAULT 0'],
+  ['max_contracts', 'max_contracts INTEGER NOT NULL DEFAULT 0'],
+]) {
+  if (jCols.length && !jCols.includes(col)) db.exec(`ALTER TABLE journals ADD COLUMN ${ddl}`);
 }
 
 // NQ & ES only (minis + micros). fee_rt defaults are typical Tradovate/Apex

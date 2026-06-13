@@ -24,9 +24,16 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
       method: 'PATCH',
       body: {
         name: form.name,
+        firm: form.firm || null,
+        phase: form.phase || 'eval',
         start_balance: Number(form.start_balance),
+        profit_target: Number(form.profit_target),
         trailing_dd: Number(form.trailing_dd),
         daily_loss_limit: Number(form.daily_loss_limit),
+        consistency_pct: Number(form.consistency_pct),
+        min_profit_days: Number(form.min_profit_days),
+        min_profit_day_amount: Number(form.min_profit_day_amount),
+        max_contracts: Number(form.max_contracts),
         dd_stops_at_start: form.dd_stops_at_start ? 1 : 0,
       },
     });
@@ -58,22 +65,64 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
         </div>
         <div className="field-row" style={{ maxWidth: 560 }}>
           <div className="field">
+            <label>Firm</label>
+            <input value={form.firm || ''} onChange={(e) => set('firm', e.target.value)} placeholder="Lucid / Apex / MFFU" />
+          </div>
+          <div className="field">
+            <label>Phase</label>
+            <select value={form.phase || 'eval'} onChange={(e) => set('phase', e.target.value)}>
+              <option value="eval">Eval / Challenge</option>
+              <option value="funded">Funded / PA</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginBottom: 14 }}>
+        <h2>Challenge rules (the Challenge page scores against these)</h2>
+        <div className="field-row" style={{ maxWidth: 720 }}>
+          <div className="field">
             <label>Account Size ($)</label>
             <input type="number" value={form.start_balance} onChange={(e) => set('start_balance', e.target.value)} />
           </div>
           <div className="field">
-            <label>Trailing Drawdown ($)</label>
-            <input type="number" value={form.trailing_dd} onChange={(e) => set('trailing_dd', e.target.value)} />
+            <label>Profit Target ($, 0=none)</label>
+            <input type="number" value={form.profit_target} onChange={(e) => set('profit_target', e.target.value)} />
           </div>
           <div className="field">
-            <label>Personal Daily Loss Limit ($)</label>
+            <label>Max Drawdown ($)</label>
+            <input type="number" value={form.trailing_dd} onChange={(e) => set('trailing_dd', e.target.value)} />
+          </div>
+        </div>
+        <div className="field-row" style={{ maxWidth: 720 }}>
+          <div className="field">
+            <label>Daily Loss Limit ($, 0=none)</label>
             <input type="number" value={form.daily_loss_limit} onChange={(e) => set('daily_loss_limit', e.target.value)} />
           </div>
+          <div className="field">
+            <label>Consistency (%, 0=none)</label>
+            <input type="number" value={form.consistency_pct} onChange={(e) => set('consistency_pct', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Max contracts (mini)</label>
+            <input type="number" value={form.max_contracts} onChange={(e) => set('max_contracts', e.target.value)} />
+          </div>
+        </div>
+        <div className="field-row" style={{ maxWidth: 720 }}>
+          <div className="field">
+            <label>Payout: qualifying days</label>
+            <input type="number" value={form.min_profit_days} onChange={(e) => set('min_profit_days', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>…each day ≥ ($)</label>
+            <input type="number" value={form.min_profit_day_amount} onChange={(e) => set('min_profit_day_amount', e.target.value)} />
+          </div>
+          <div className="field" />
         </div>
         <label className="muted" style={{ fontSize: 13 }}>
           <input type="checkbox" checked={!!form.dd_stops_at_start}
             onChange={(e) => set('dd_stops_at_start', e.target.checked)} />
-          {' '}Threshold stops trailing at starting balance (Apex PA style)
+          {' '}Threshold stops trailing at starting balance (Apex/Lucid PA style)
         </label>
       </div>
 

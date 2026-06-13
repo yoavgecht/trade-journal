@@ -6,6 +6,7 @@ const allTrades = (journalId) =>
   db.prepare('SELECT * FROM trades WHERE exit_time IS NOT NULL AND journal_id = ? ORDER BY exit_time').all(journalId);
 
 const day = (iso) => (iso || '').slice(0, 10);
+const money = (n) => `${n < 0 ? '-' : ''}$${Math.abs(Math.round(n)).toLocaleString('en-US')}`;
 
 export function summary(journalId) {
   const trades = allTrades(journalId);
@@ -198,6 +199,111 @@ export function risk(journalId) {
     minDistance: r2(minDistance),
     breachedOn,
     series,
+  };
+}
+
+// Challenge / payout scoreboard — the "am I passing, and what's left?" view.
+// Combines the firm's rules (profit target, trailing drawdown, consistency,
+// qualifying days) into one verdict + a checklist with the exact $ remaining.
+export function challenge(journalId) {
+  const j = getJournal(journalId) || {};
+  const eq = equity(journalId);            // daily {date, pnl, cum}
+  const rk = risk(journalId);              // trailing-dd sim
+
+  const profit = eq.length ? eq[eq.length - 1].cum : 0;
+  const target = j.profit_target || 0;
+  const days = eq.map((d) => d.pnl);
+  const greenDays = eq.filter((d) => d.pnl > 0);
+  const bestDay = greenDays.length ? Math.max(...greenDays.map((d) => d.pnl)) : 0;
+
+  // --- Profit target ---
+  const targetMet = target > 0 ? profit >= target : true;
+  const targetRemaining = Math.max(0, target - profit);
+
+  // --- Consistency: best winning day must be ≤ consistency% of total profit.
+  // To comply you need total profit ≥ bestDay / (pct/100). Surface the gap.
+  const cpct = j.consistency_pct || 0;
+  let consistency = null;
+  if (cpct > 0) {
+    const cap = cpct / 100;
+    const bestDayShare = profit > 0 ? bestDay / profit : (bestDay > 0 ? 1 : 0);
+    const requiredTotal = bestDay > 0 ? bestDay / cap : 0;   // total profit needed to legitimize bestDay
+    const maxDayAtTarget = target > 0 ? target * cap : null; // biggest single day allowed at the target
+    consistency = {
+      pct: cpct,
+      bestDay: r2(bestDay),
+      bestDayShare: r2(bestDayShare * 100),
+      compliant: bestDayShare <= cap + 1e-9,
+      requiredTotal: r2(requiredTotal),
+      additionalNeeded: r2(Math.max(0, requiredTotal - profit)),
+      maxDayAtTarget: maxDayAtTarget == null ? null : r2(maxDayAtTarget),
+    };
+  }
+
+  // --- Qualifying days (payout): days with pnl ≥ threshold ---
+  let qualifying = null;
+  if (j.min_profit_days > 0) {
+    const amt = j.min_profit_day_amount || 0;
+    const have = eq.filter((d) => d.pnl >= amt && d.pnl > 0).length;
+    qualifying = {
+      need: j.min_profit_days,
+      amount: amt,
+      have,
+      remaining: Math.max(0, j.min_profit_days - have),
+      met: have >= j.min_profit_days,
+    };
+  }
+
+  // --- Daily loss limit: days that CLOSED at/below the limit (day-granularity) ---
+  const dll = j.daily_loss_limit || 0;
+  const dllBreaches = dll > 0 ? eq.filter((d) => d.pnl <= -dll).length : 0;
+
+  // --- Room today: most you can lose before breaching the trailing threshold,
+  // capped by the daily loss limit. The pre-trade "stop for the day" number. ---
+  const roomToday = dll > 0 ? Math.min(rk.distance, dll) : rk.distance;
+
+  // --- Overall verdict ---
+  const consistencyOk = !consistency || consistency.compliant;
+  const qualifyingOk = !qualifying || qualifying.met;
+  let status, headline;
+  if (rk.breachedOn) {
+    status = 'failed';
+    headline = `Account blown — trailing drawdown breached on ${rk.breachedOn}.`;
+  } else if (targetMet && consistencyOk && qualifyingOk) {
+    status = 'passed';
+    headline = j.phase === 'funded' ? 'Payout requirements met. 🎉' : 'Challenge passed. 🎉';
+  } else {
+    status = 'progress';
+    const bits = [];
+    if (!targetMet) bits.push(`${money(targetRemaining)} more profit`);
+    if (consistency && !consistency.compliant) bits.push(`${money(consistency.additionalNeeded)} more to fix consistency`);
+    if (qualifying && !qualifying.met) bits.push(`${qualifying.remaining} more qualifying day(s)`);
+    headline = `In progress — need ${bits.join(', ')}.`;
+  }
+
+  return {
+    firm: j.firm || null,
+    phase: j.phase || 'eval',
+    profit: r2(profit),
+    target,
+    targetMet,
+    targetRemaining: r2(targetRemaining),
+    targetPct: target > 0 ? r2(Math.min(100, (profit / target) * 100)) : null,
+    drawdown: {
+      trailingDd: rk.trailingDd,
+      distance: rk.distance,
+      minDistance: rk.minDistance,
+      threshold: rk.currentThreshold,
+      breachedOn: rk.breachedOn,
+    },
+    consistency,
+    qualifying,
+    dailyLossLimit: dll,
+    dllBreaches,
+    roomToday: r2(roomToday),
+    tradingDays: eq.length,
+    status,
+    headline,
   };
 }
 
