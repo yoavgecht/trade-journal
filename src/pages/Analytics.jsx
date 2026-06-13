@@ -56,30 +56,64 @@ function bucketStats(trades, dim) {
     if (b == null) continue;
     (groups[b] ??= []).push(t);
   }
-  return Object.entries(groups).map(([bucket, list]) => ({
-    bucket,
-    n: list.length,
-    winRate: Math.round((list.filter((t) => t.pnl > 0).length / list.length) * 100),
-    pnl: Math.round(list.reduce((s, t) => s + t.pnl, 0)),
-    expectancy: Math.round(list.reduce((s, t) => s + t.pnl, 0) / list.length),
-  })).sort((a, b) => DIMENSIONS[dim].order(a.bucket, b.bucket));
+  return Object.entries(groups).map(([bucket, list]) => {
+    const rs = list.filter((t) => t._R != null);
+    return {
+      bucket,
+      n: list.length,
+      winRate: Math.round((list.filter((t) => t.pnl > 0).length / list.length) * 100),
+      pnl: Math.round(list.reduce((s, t) => s + t.pnl, 0)),
+      expectancy: Math.round(list.reduce((s, t) => s + t.pnl, 0) / list.length),
+      avgR: rs.length ? Math.round((rs.reduce((s, t) => s + t._R, 0) / rs.length) * 100) / 100 : null,
+    };
+  }).sort((a, b) => DIMENSIONS[dim].order(a.bucket, b.bucket));
 }
 
-export default function Analytics({ dataVersion }) {
+export default function Analytics({ dataVersion, journal }) {
   const [raw, setRaw] = useState(null);
+  const [products, setProducts] = useState(null);
   const [dim, setDim] = useState('Entry hour');
-  const [metric, setMetric] = useState('expectancy'); // expectancy | winRate | pnl
+  const [metric, setMetric] = useState('expectancy'); // expectancy | winRate | pnl | avgR
   // What-if filters
   const [wf, setWf] = useState({ beforeTime: false, beforeHour: 10, longHold: false, holdMin: 15, afterLoss: false, overtrade: false });
 
-  useEffect(() => { api('/trades').then(setRaw); }, [dataVersion]);
-  const trades = useMemo(() => raw ? enrich(raw) : [], [raw]);
+  useEffect(() => { api('/trades').then(setRaw); api('/products').then(setProducts); }, [dataVersion]);
+  // Attach R-multiple to each trade: risk$ from the per-trade stop, else the
+  // journal's default risk. R = pnl / risk$.
+  const trades = useMemo(() => {
+    if (!raw || !products) return [];
+    const ts = enrich(raw);
+    const defRisk = journal?.default_risk || 0;
+    for (const t of ts) {
+      const pv = products[t.product]?.point_value || 0;
+      const risk = (t.stop != null && t.entry_price != null && pv)
+        ? Math.abs(t.entry_price - t.stop) * pv * (t.qty || 1)
+        : defRisk;
+      t._R = risk > 0 ? Math.round((t.pnl / risk) * 100) / 100 : null;
+    }
+    return ts;
+  }, [raw, products, journal]);
 
-  if (!raw) return null;
+  if (!raw || !products) return null;
   if (trades.length === 0) return (<><h1>Trade Analytics</h1><div className="panel muted">No trades yet — import a CSV to explore your analytics.</div></>);
 
   const stats = bucketStats(trades, dim);
-  const metricLabel = { expectancy: 'Avg P&L / trade', winRate: 'Win rate %', pnl: 'Total P&L' }[metric];
+  const metricLabel = { expectancy: 'Avg P&L / trade', winRate: 'Win rate %', pnl: 'Total P&L', avgR: 'Avg R-multiple' }[metric];
+
+  // --- R-multiple stats ---
+  const rTrades = trades.filter((t) => t._R != null);
+  const rWins = rTrades.filter((t) => t.pnl > 0);
+  const rLosses = rTrades.filter((t) => t.pnl < 0);
+  const avgR = rTrades.length ? rTrades.reduce((s, t) => s + t._R, 0) / rTrades.length : null;
+  const totalR = rTrades.reduce((s, t) => s + t._R, 0);
+  const avgWinR = rWins.length ? rWins.reduce((s, t) => s + t._R, 0) / rWins.length : null;
+  const avgLossR = rLosses.length ? rLosses.reduce((s, t) => s + t._R, 0) / rLosses.length : null;
+  const rBuckets = [
+    { k: '≤ -2R', t: (r) => r <= -2 }, { k: '-2 to -1R', t: (r) => r > -2 && r <= -1 },
+    { k: '-1 to 0R', t: (r) => r > -1 && r < 0 }, { k: '0 to 1R', t: (r) => r >= 0 && r < 1 },
+    { k: '1 to 2R', t: (r) => r >= 1 && r < 2 }, { k: '2 to 3R', t: (r) => r >= 2 && r < 3 },
+    { k: '3R+', t: (r) => r >= 3 },
+  ].map((b) => ({ bucket: b.k, n: rTrades.filter((t) => b.t(t._R)).length }));
 
   // --- What-if: predicate = should this trade be EXCLUDED? ---
   const excluded = (t) => {
@@ -117,14 +151,15 @@ export default function Analytics({ dataVersion }) {
             <option value="expectancy">Avg P&L / trade</option>
             <option value="winRate">Win rate %</option>
             <option value="pnl">Total P&L</option>
+            <option value="avgR">Avg R-multiple</option>
           </select>
         </div>
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={stats} margin={{ top: 10 }}>
             <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
             <XAxis dataKey="bucket" stroke="#6b7280" fontSize={11} />
-            <YAxis stroke="#6b7280" fontSize={11} tickFormatter={(v) => metric === 'winRate' ? `${v}%` : `$${v}`} />
-            <Tooltip contentStyle={tip} formatter={(v, k) => k === 'winRate' ? `${v}%` : money(v)}
+            <YAxis stroke="#6b7280" fontSize={11} tickFormatter={(v) => metric === 'winRate' ? `${v}%` : metric === 'avgR' ? `${v}R` : `$${v}`} />
+            <Tooltip contentStyle={tip} formatter={(v) => metric === 'winRate' ? `${v}%` : metric === 'avgR' ? `${v}R` : money(v)}
               labelFormatter={(b) => { const s = stats.find((x) => x.bucket === b); return `${b} — ${s?.n} trades, ${s?.winRate}% win`; }} />
             <ReferenceLine y={0} stroke="#9ca3af" />
             <Bar dataKey={metric} name={metricLabel}>
@@ -147,6 +182,41 @@ export default function Analytics({ dataVersion }) {
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* R-multiple analysis */}
+      <div className="panel" style={{ marginBottom: 14 }}>
+        <h2>R-multiple analysis (risk-normalized)</h2>
+        {rTrades.length === 0 ? (
+          <div className="muted">
+            No R data yet. Add a <b>stop price</b> when you journal a trade (click a trade → Stop price), or set a
+            <b> default risk per trade</b> in Settings. R = profit ÷ risk, so a +2R trade made twice what you risked.
+          </div>
+        ) : (
+          <>
+            <div className="grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: 10 }}>
+              <div><div className="stat-label">Expectancy</div><div className={`stat-value ${avgR >= 0 ? 'pos' : 'neg'}`} style={{ fontSize: 18 }}>{avgR >= 0 ? '+' : ''}{fmt(avgR)}R</div><div className="muted" style={{ fontSize: 11 }}>avg per trade</div></div>
+              <div><div className="stat-label">Total</div><div className={`stat-value ${totalR >= 0 ? 'pos' : 'neg'}`} style={{ fontSize: 18 }}>{totalR >= 0 ? '+' : ''}{fmt(totalR)}R</div></div>
+              <div><div className="stat-label">Avg win</div><div className="stat-value pos" style={{ fontSize: 18 }}>+{fmt(avgWinR)}R</div></div>
+              <div><div className="stat-label">Avg loss</div><div className="stat-value neg" style={{ fontSize: 18 }}>{fmt(avgLossR)}R</div></div>
+              <div><div className="stat-label">Trades with R data</div><div className="stat-value" style={{ fontSize: 18 }}>{rTrades.length}/{trades.length}</div></div>
+            </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={rBuckets}>
+                <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+                <XAxis dataKey="bucket" stroke="#6b7280" fontSize={11} />
+                <YAxis stroke="#6b7280" fontSize={11} allowDecimals={false} />
+                <Tooltip contentStyle={tip} formatter={(v) => `${v} trades`} />
+                <Bar dataKey="n" name="Trades">
+                  {rBuckets.map((b, i) => <Cell key={i} fill={b.bucket.includes('-') || b.bucket.startsWith('≤') ? '#dc2626' : '#16a34a'} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              Expectancy in R is the cleanest measure of edge: positive means each trade makes money on average relative to what you risk, independent of size.
+            </div>
+          </>
+        )}
       </div>
 
       {/* What-if equity simulator */}

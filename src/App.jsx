@@ -252,7 +252,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Overview dataVersion={dataVersion} journal={active} onOpenImport={() => setShowImport(true)} />} />
             <Route path="/challenge" element={<Challenge dataVersion={dataVersion} journal={active} />} />
-            <Route path="/analytics" element={<Analytics dataVersion={dataVersion} />} />
+            <Route path="/analytics" element={<Analytics dataVersion={dataVersion} journal={active} />} />
             <Route path="/patterns" element={<Patterns dataVersion={dataVersion} />} />
             <Route path="/risk" element={<Risk dataVersion={dataVersion} />} />
             <Route path="/trades" element={<Trades dataVersion={dataVersion} />} />

@@ -37,10 +37,10 @@ app.post('/api/journals', (req, res) => {
   const r = db.prepare(`INSERT INTO journals
     (name, start_balance, trailing_dd, daily_loss_limit, dd_stops_at_start, deposit_date,
      firm, phase, profit_target, consistency_pct, consistency_cushion_pct, min_profit_days, min_profit_day_amount, max_contracts,
-     min_payout, payout_cap, max_payouts)
+     min_payout, payout_cap, max_payouts, default_risk)
     VALUES (@name, @start_balance, @trailing_dd, @daily_loss_limit, @dd_stops_at_start, @deposit_date,
      @firm, @phase, @profit_target, @consistency_pct, @consistency_cushion_pct, @min_profit_days, @min_profit_day_amount, @max_contracts,
-     @min_payout, @payout_cap, @max_payouts)`).run({
+     @min_payout, @payout_cap, @max_payouts, @default_risk)`).run({
     name: String(b.name).trim(),
     start_balance: Number(b.start_balance ?? 50000),
     trailing_dd: Number(b.trailing_dd ?? 2500),
@@ -58,6 +58,7 @@ app.post('/api/journals', (req, res) => {
     min_payout: Number(b.min_payout ?? 0),
     payout_cap: Number(b.payout_cap ?? 0),
     max_payouts: Number(b.max_payouts ?? 0),
+    default_risk: Number(b.default_risk ?? 0),
   });
   res.json(getJournal(r.lastInsertRowid));
 });
@@ -67,7 +68,7 @@ app.patch('/api/journals/:id', (req, res) => {
   if (!j) return res.status(404).json({ error: 'no such journal' });
   const allowed = ['name', 'start_balance', 'trailing_dd', 'daily_loss_limit', 'dd_stops_at_start',
     'deposit_date', 'firm', 'phase', 'profit_target', 'consistency_pct', 'consistency_cushion_pct',
-    'min_profit_days', 'min_profit_day_amount', 'max_contracts', 'min_payout', 'payout_cap', 'max_payouts'];
+    'min_profit_days', 'min_profit_day_amount', 'max_contracts', 'min_payout', 'payout_cap', 'max_payouts', 'default_risk'];
   for (const k of allowed) {
     if (k in (req.body || {})) {
       db.prepare(`UPDATE journals SET ${k} = ? WHERE id = ?`).run(req.body[k], j.id);
@@ -110,7 +111,7 @@ app.get('/api/trades', (req, res) => {
   const id = journalId(req, res);
   if (!id) return;
   const rows = db.prepare(`
-    SELECT t.*, m.setup, m.mistakes, m.notes, m.rating, m.screenshots
+    SELECT t.*, m.setup, m.mistakes, m.notes, m.rating, m.screenshots, m.stop, m.target
     FROM trades t LEFT JOIN trade_meta m ON m.trade_id = t.id
     WHERE t.journal_id = ?
     ORDER BY t.exit_time DESC
@@ -121,13 +122,14 @@ app.get('/api/trades', (req, res) => {
 app.patch('/api/trades/:id/meta', (req, res) => {
   const id = Number(req.params.id);
   if (!db.prepare('SELECT 1 FROM trades WHERE id = ?').get(id)) return res.status(404).json({ error: 'no such trade' });
-  const { setup = null, mistakes = null, notes = null, rating = null } = req.body || {};
+  const { setup = null, mistakes = null, notes = null, rating = null, stop = null, target = null } = req.body || {};
   // screenshots are managed by their own endpoints — never clobbered here.
   db.prepare(`
-    INSERT INTO trade_meta (trade_id, setup, mistakes, notes, rating) VALUES (?, ?, ?, ?, ?)
+    INSERT INTO trade_meta (trade_id, setup, mistakes, notes, rating, stop, target) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(trade_id) DO UPDATE SET setup=excluded.setup, mistakes=excluded.mistakes,
-      notes=excluded.notes, rating=excluded.rating
-  `).run(id, setup, mistakes == null ? null : JSON.stringify(mistakes), notes, rating);
+      notes=excluded.notes, rating=excluded.rating, stop=excluded.stop, target=excluded.target
+  `).run(id, setup, mistakes == null ? null : JSON.stringify(mistakes), notes, rating,
+    stop == null || stop === '' ? null : Number(stop), target == null || target === '' ? null : Number(target));
   res.json({ ok: true });
 });
 

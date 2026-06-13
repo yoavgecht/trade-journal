@@ -117,6 +117,12 @@ if (metaCols.length && !metaCols.includes('screenshots')) {
   db.exec('ALTER TABLE trade_meta ADD COLUMN screenshots TEXT');
 }
 
+// Per-trade stop/target → R-multiples (risk-normalized performance).
+const metaCols2 = db.prepare("SELECT name FROM pragma_table_info('trade_meta')").all().map((c) => c.name);
+for (const [col, ddl] of [['stop', 'stop REAL'], ['target', 'target REAL']]) {
+  if (metaCols2.length && !metaCols2.includes(col)) db.exec(`ALTER TABLE trade_meta ADD COLUMN ${ddl}`);
+}
+
 // Pre-challenge journals: add the rule columns in place (journals are precious).
 const jCols = db.prepare("SELECT name FROM pragma_table_info('journals')").all().map((c) => c.name);
 for (const [col, ddl] of [
@@ -131,6 +137,7 @@ for (const [col, ddl] of [
   ['min_payout', 'min_payout REAL NOT NULL DEFAULT 0'],
   ['payout_cap', 'payout_cap REAL NOT NULL DEFAULT 0'],
   ['max_payouts', 'max_payouts INTEGER NOT NULL DEFAULT 0'],
+  ['default_risk', 'default_risk REAL NOT NULL DEFAULT 0'], // $ risked/trade when no per-trade stop set
 ]) {
   if (jCols.length && !jCols.includes(col)) db.exec(`ALTER TABLE journals ADD COLUMN ${ddl}`);
 }

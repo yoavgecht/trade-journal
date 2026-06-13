@@ -18,6 +18,8 @@ export default function TradePanel({ trade, onClose, onSaved }) {
   const [mistakes, setMistakes] = useState(() => parseJsonArr(trade.mistakes));
   const [notes, setNotes] = useState(trade.notes || '');
   const [rating, setRating] = useState(trade.rating || 0);
+  const [stop, setStop] = useState(trade.stop ?? '');
+  const [target, setTarget] = useState(trade.target ?? '');
   const [shots, setShots] = useState(() => parseJsonArr(trade.screenshots));
   const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -30,7 +32,8 @@ export default function TradePanel({ trade, onClose, onSaved }) {
     setSaving(true);
     await api(`/trades/${trade.id}/meta`, {
       method: 'PATCH',
-      body: { setup: setup || null, mistakes, notes: notes || null, rating: rating || null },
+      body: { setup: setup || null, mistakes, notes: notes || null, rating: rating || null,
+        stop: stop === '' ? null : Number(stop), target: target === '' ? null : Number(target) },
     });
     setSaving(false);
     onSaved();
@@ -84,6 +87,24 @@ export default function TradePanel({ trade, onClose, onSaved }) {
           <label>Setup</label>
           <input value={setup} onChange={(e) => setSetup(e.target.value)} placeholder="e.g. ORB, VWAP fade, news fade" />
         </div>
+
+        <div className="field-row">
+          <div className="field">
+            <label>Stop price (for R-multiple)</label>
+            <input type="number" step="any" value={stop} onChange={(e) => setStop(e.target.value)} placeholder="e.g. 21890" />
+          </div>
+          <div className="field">
+            <label>Target price (optional)</label>
+            <input type="number" step="any" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="e.g. 21930" />
+          </div>
+        </div>
+        {stop !== '' && trade.entry_price != null && (
+          <div className="muted" style={{ fontSize: 12, marginTop: -4, marginBottom: 8 }}>
+            Risk: {Math.abs(trade.entry_price - Number(stop)).toFixed(2)} pts
+            {target !== '' && Number(stop) !== trade.entry_price &&
+              ` · planned R:R ${(Math.abs(Number(target) - trade.entry_price) / Math.abs(trade.entry_price - Number(stop))).toFixed(2)}:1`}
+          </div>
+        )}
 
         <div className="field">
           <label>Mistakes</label>

@@ -38,6 +38,7 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
         min_payout: Number(form.min_payout || 0),
         payout_cap: Number(form.payout_cap || 0),
         max_payouts: Number(form.max_payouts || 0),
+        default_risk: Number(form.default_risk || 0),
         dd_stops_at_start: form.dd_stops_at_start ? 1 : 0,
       },
     });
@@ -117,7 +118,11 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
             <label>Max contracts (mini)</label>
             <input type="number" value={form.max_contracts} onChange={(e) => set('max_contracts', e.target.value)} />
           </div>
-          <div className="field" /><div className="field" />
+          <div className="field">
+            <label>Default risk / trade ($, for R when no stop)</label>
+            <input type="number" value={form.default_risk ?? 0} onChange={(e) => set('default_risk', e.target.value)} />
+          </div>
+          <div className="field" />
         </div>
         <div className="field-row" style={{ maxWidth: 720 }}>
           <div className="field">
