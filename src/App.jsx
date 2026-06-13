@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Routes, Route, NavLink } from 'react-router-dom';
 import Overview from './pages/Overview.jsx';
 import Challenge from './pages/Challenge.jsx';
+import Analytics from './pages/Analytics.jsx';
 import Patterns from './pages/Patterns.jsx';
 import Risk from './pages/Risk.jsx';
 import Trades from './pages/Trades.jsx';
@@ -235,6 +236,7 @@ export default function App() {
         <div style={{ marginTop: 16 }}>
           <NavLink className="nav-link" to="/" end>Home</NavLink>
           <NavLink className="nav-link" to="/challenge">Challenge</NavLink>
+          <NavLink className="nav-link" to="/analytics">Analytics</NavLink>
           <NavLink className="nav-link" to="/patterns">Patterns</NavLink>
           <NavLink className="nav-link" to="/risk">Risk</NavLink>
           <NavLink className="nav-link" to="/trades">Trades</NavLink>
@@ -250,6 +252,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Overview dataVersion={dataVersion} journal={active} onOpenImport={() => setShowImport(true)} />} />
             <Route path="/challenge" element={<Challenge dataVersion={dataVersion} journal={active} />} />
+            <Route path="/analytics" element={<Analytics dataVersion={dataVersion} />} />
             <Route path="/patterns" element={<Patterns dataVersion={dataVersion} />} />
             <Route path="/risk" element={<Risk dataVersion={dataVersion} />} />
             <Route path="/trades" element={<Trades dataVersion={dataVersion} />} />
