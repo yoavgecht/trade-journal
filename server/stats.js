@@ -220,17 +220,24 @@ export function challenge(journalId) {
   const targetMet = target > 0 ? profit >= target : true;
   const targetRemaining = Math.max(0, target - profit);
 
-  // --- Consistency: best winning day must be ≤ consistency% of total profit.
-  // To comply you need total profit ≥ bestDay / (pct/100). Surface the gap.
+  // --- Consistency: largest single DAY profit / total profit must be ≤ the
+  // limit (Lucid/Apex rule). Lucid adds a small "cushion" (extra percentage
+  // points of slack) so the effective cap is e.g. 52% on a 50% rule — at the
+  // $3,000 target that allows a $1,560 best day, not $1,500. To comply you need
+  // total profit ≥ bestDay / (effective/100); surface that gap.
   const cpct = j.consistency_pct || 0;
   let consistency = null;
   if (cpct > 0) {
-    const cap = cpct / 100;
+    const cushionPP = j.consistency_cushion_pct || 0;
+    const effPct = cpct + cushionPP;            // effective cap (e.g. 52)
+    const cap = effPct / 100;
     const bestDayShare = profit > 0 ? bestDay / profit : (bestDay > 0 ? 1 : 0);
     const requiredTotal = bestDay > 0 ? bestDay / cap : 0;   // total profit needed to legitimize bestDay
-    const maxDayAtTarget = target > 0 ? target * cap : null; // biggest single day allowed at the target
+    const maxDayAtTarget = target > 0 ? target * cap : null; // biggest single day allowed at the target (with cushion)
     consistency = {
       pct: cpct,
+      cushionPct: cushionPP,
+      effectivePct: effPct,
       bestDay: r2(bestDay),
       bestDayShare: r2(bestDayShare * 100),
       compliant: bestDayShare <= cap + 1e-9,

@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS journals (
   phase TEXT DEFAULT 'eval',                  -- eval | funded
   profit_target REAL NOT NULL DEFAULT 3000,   -- pass target ($); 0 = none (live)
   consistency_pct REAL NOT NULL DEFAULT 0,    -- best-day cap as % of total; 0 = none
+  consistency_cushion_pct REAL NOT NULL DEFAULT 0, -- extra pp of slack (Lucid = 2 → effective 52%)
   min_profit_days INTEGER NOT NULL DEFAULT 0, -- qualifying days needed (payout)
   min_profit_day_amount REAL NOT NULL DEFAULT 0, -- $ that makes a day "qualifying"
   max_contracts INTEGER NOT NULL DEFAULT 0,   -- position-size cap (mini); 0 = none
@@ -112,6 +113,7 @@ for (const [col, ddl] of [
   ['phase', "phase TEXT DEFAULT 'eval'"],
   ['profit_target', 'profit_target REAL NOT NULL DEFAULT 3000'],
   ['consistency_pct', 'consistency_pct REAL NOT NULL DEFAULT 0'],
+  ['consistency_cushion_pct', 'consistency_cushion_pct REAL NOT NULL DEFAULT 0'],
   ['min_profit_days', 'min_profit_days INTEGER NOT NULL DEFAULT 0'],
   ['min_profit_day_amount', 'min_profit_day_amount REAL NOT NULL DEFAULT 0'],
   ['max_contracts', 'max_contracts INTEGER NOT NULL DEFAULT 0'],

@@ -15,7 +15,7 @@ export const PRESETS = {
     firm: 'Lucid', phase: 'eval',
     start_balance: 50000, profit_target: 3000, trailing_dd: 2000,
     dd_stops_at_start: true, daily_loss_limit: 0,
-    consistency_pct: 50, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 4,
+    consistency_pct: 50, consistency_cushion_pct: 2, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 4,
   },
   'lucid-50k-flex-funded': {
     label: 'Lucid 50K — Flex Funded (payout)',

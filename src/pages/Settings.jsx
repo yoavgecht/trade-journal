@@ -31,6 +31,7 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
         trailing_dd: Number(form.trailing_dd),
         daily_loss_limit: Number(form.daily_loss_limit),
         consistency_pct: Number(form.consistency_pct),
+        consistency_cushion_pct: Number(form.consistency_cushion_pct || 0),
         min_profit_days: Number(form.min_profit_days),
         min_profit_day_amount: Number(form.min_profit_day_amount),
         max_contracts: Number(form.max_contracts),
@@ -104,9 +105,16 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
             <input type="number" value={form.consistency_pct} onChange={(e) => set('consistency_pct', e.target.value)} />
           </div>
           <div className="field">
+            <label>Consistency cushion (+pp)</label>
+            <input type="number" value={form.consistency_cushion_pct ?? 0} onChange={(e) => set('consistency_cushion_pct', e.target.value)} />
+          </div>
+        </div>
+        <div className="field-row" style={{ maxWidth: 720 }}>
+          <div className="field">
             <label>Max contracts (mini)</label>
             <input type="number" value={form.max_contracts} onChange={(e) => set('max_contracts', e.target.value)} />
           </div>
+          <div className="field" /><div className="field" />
         </div>
         <div className="field-row" style={{ maxWidth: 720 }}>
           <div className="field">

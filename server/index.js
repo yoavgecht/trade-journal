@@ -36,9 +36,9 @@ app.post('/api/journals', (req, res) => {
   if (!b.name || !String(b.name).trim()) return res.status(400).json({ error: 'name required' });
   const r = db.prepare(`INSERT INTO journals
     (name, start_balance, trailing_dd, daily_loss_limit, dd_stops_at_start, deposit_date,
-     firm, phase, profit_target, consistency_pct, min_profit_days, min_profit_day_amount, max_contracts)
+     firm, phase, profit_target, consistency_pct, consistency_cushion_pct, min_profit_days, min_profit_day_amount, max_contracts)
     VALUES (@name, @start_balance, @trailing_dd, @daily_loss_limit, @dd_stops_at_start, @deposit_date,
-     @firm, @phase, @profit_target, @consistency_pct, @min_profit_days, @min_profit_day_amount, @max_contracts)`).run({
+     @firm, @phase, @profit_target, @consistency_pct, @consistency_cushion_pct, @min_profit_days, @min_profit_day_amount, @max_contracts)`).run({
     name: String(b.name).trim(),
     start_balance: Number(b.start_balance ?? 50000),
     trailing_dd: Number(b.trailing_dd ?? 2500),
@@ -49,6 +49,7 @@ app.post('/api/journals', (req, res) => {
     phase: b.phase ?? 'eval',
     profit_target: Number(b.profit_target ?? 3000),
     consistency_pct: Number(b.consistency_pct ?? 0),
+    consistency_cushion_pct: Number(b.consistency_cushion_pct ?? 0),
     min_profit_days: Number(b.min_profit_days ?? 0),
     min_profit_day_amount: Number(b.min_profit_day_amount ?? 0),
     max_contracts: Number(b.max_contracts ?? 0),
@@ -60,8 +61,8 @@ app.patch('/api/journals/:id', (req, res) => {
   const j = getJournal(Number(req.params.id));
   if (!j) return res.status(404).json({ error: 'no such journal' });
   const allowed = ['name', 'start_balance', 'trailing_dd', 'daily_loss_limit', 'dd_stops_at_start',
-    'deposit_date', 'firm', 'phase', 'profit_target', 'consistency_pct', 'min_profit_days',
-    'min_profit_day_amount', 'max_contracts'];
+    'deposit_date', 'firm', 'phase', 'profit_target', 'consistency_pct', 'consistency_cushion_pct',
+    'min_profit_days', 'min_profit_day_amount', 'max_contracts'];
   for (const k of allowed) {
     if (k in (req.body || {})) {
       db.prepare(`UPDATE journals SET ${k} = ? WHERE id = ?`).run(req.body[k], j.id);

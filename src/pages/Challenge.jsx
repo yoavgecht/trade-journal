@@ -92,10 +92,10 @@ export default function Challenge({ dataVersion, journal }) {
         {c.consistency && (
           <Check ok={c.consistency.compliant}>
             <div className="row">
-              <b>Consistency — best day ≤ {c.consistency.pct}% of total</b><div className="spacer" />
-              <span>best day is {fmt(c.consistency.bestDayShare)}% ({money(c.consistency.bestDay)})</span>
+              <b>Consistency — biggest day ≤ {c.consistency.pct}% of total profit</b><div className="spacer" />
+              <span>biggest day is {fmt(c.consistency.bestDayShare)}% ({money(c.consistency.bestDay)})</span>
             </div>
-            <Bar pct={(c.consistency.pct / Math.max(c.consistency.bestDayShare, c.consistency.pct)) * 100}
+            <Bar pct={(c.consistency.effectivePct / Math.max(c.consistency.bestDayShare, c.consistency.effectivePct)) * 100}
               color={c.consistency.compliant ? 'var(--green)' : 'var(--red)'} />
             {!c.consistency.compliant && (
               <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
@@ -105,7 +105,10 @@ export default function Challenge({ dataVersion, journal }) {
             )}
             {c.consistency.compliant && c.consistency.maxDayAtTarget != null && (
               <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                At the {money(c.target)} target, keep any single day under {money(c.consistency.maxDayAtTarget)}.
+                At the {money(c.target)} target, keep any single day under <b>{money(c.consistency.maxDayAtTarget)}</b>
+                {c.consistency.cushionPct > 0
+                  ? ` (${c.consistency.pct}% + ${c.consistency.cushionPct}% cushion = ${c.consistency.effectivePct}% of target).`
+                  : '.'}
               </div>
             )}
           </Check>
