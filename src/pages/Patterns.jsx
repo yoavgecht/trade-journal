@@ -76,10 +76,22 @@ function buildFindings(p, totalTrades) {
   return out.sort((a, b) => (a.tone === 'bad' ? -1 : 1) - (b.tone === 'bad' ? -1 : 1) || (a.cost ?? 0) - (b.cost ?? 0));
 }
 
+function insightText(it) {
+  const subj = `${it.dim === 'Entry time' ? 'Entries ' : it.dim === 'Hold time' ? 'Holding ' : ''}${it.bucket}`;
+  if (it.tone === 'bad') {
+    return `${subj}: you lose ${fmt(it.lossRate)}% of the time (${fmt(it.winRate)}% win rate vs ${fmt(it.baseWin)}% overall) over ${it.n} trades — ${money(it.pnl)} total.`;
+  }
+  return `${subj}: ${fmt(it.winRate)}% win rate (vs ${fmt(it.baseWin)}% overall) over ${it.n} trades — ${money(it.pnl)} total. Lean into it.`;
+}
+
 export default function Patterns({ dataVersion }) {
   const [p, setP] = useState(null);
-  useEffect(() => { api('/patterns').then(setP); }, [dataVersion]);
-  if (!p) return null;
+  const [disc, setDisc] = useState(null);
+  useEffect(() => {
+    api('/patterns').then(setP);
+    api('/insights').then(setDisc);
+  }, [dataVersion]);
+  if (!p || !disc) return null;
 
   const totalTrades = p.revenge.trades + p.nonRevenge.trades;
   const findings = buildFindings(p, totalTrades);
@@ -88,22 +100,37 @@ export default function Patterns({ dataVersion }) {
     <>
       <h1>Patterns</h1>
 
-      {totalTrades < 10 && (
-        <div className="infobox" style={{ marginBottom: 14 }}>
-          Only {totalTrades} trade{totalTrades !== 1 ? 's' : ''} so far — patterns get reliable around 20+. Findings below are early reads, not conclusions.
-        </div>
-      )}
-
-      {/* Plain-language findings */}
+      {/* Discovered patterns — the auto-discovery engine */}
       <div className="panel" style={{ marginBottom: 14 }}>
-        <h2>What the data is telling you</h2>
-        {findings.length === 0 ? (
+        <h2>Discovered patterns — what works, what doesn't</h2>
+        {!disc.ready ? (
           <div className="muted">
-            {totalTrades === 0
-              ? 'No trades yet. Import a Tradovate CSV (Import Trades) and findings will appear here.'
-              : 'No problem patterns detected yet — nothing screaming for attention. Keep logging trades and tagging mistakes.'}
+            Pattern discovery needs at least {disc.need} trades ({disc.total} so far). Import more and the tool will
+            slice your trades by entry time, hold time, direction, size, sequence and more — and flag where your win
+            rate drops or spikes.
           </div>
+        ) : disc.insights.length === 0 ? (
+          <div className="muted">No bucket deviates strongly from your {fmt(disc.baseWin)}% baseline yet — no lopsided patterns to report. (More trades sharpen this.)</div>
         ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 2 }}>Your overall win rate is {fmt(disc.baseWin)}%. These slices stand out:</div>
+            {disc.insights.map((it, i) => (
+              <div key={i} className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
+                <span style={{ fontSize: 15, lineHeight: '20px' }}>{it.tone === 'good' ? '🟢' : '🔴'}</span>
+                <span style={{ flex: 1 }}>
+                  <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>{it.dim}</span><br />
+                  {insightText(it)}{it.small && <span className="muted"> (small sample)</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Discipline findings */}
+      {findings.length > 0 && (
+        <div className="panel" style={{ marginBottom: 14 }}>
+          <h2>Discipline flags</h2>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {findings.map((f, i) => (
               <div key={i} className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
@@ -114,8 +141,8 @@ export default function Patterns({ dataVersion }) {
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 14 }}>
         <div className="panel">

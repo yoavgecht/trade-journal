@@ -202,6 +202,91 @@ export function risk(journalId) {
   };
 }
 
+// Pattern DISCOVERY engine. Slices trades across many dimensions and surfaces
+// the buckets whose win-rate / expectancy deviate hard from the overall
+// baseline — "entries before 10:00 lose 80% of the time" type findings — with
+// enough sample size to mean something. Returns ranked, plain-language insights.
+export function insights(journalId) {
+  const trades = allTrades(journalId).filter((t) => t.entry_time);
+  const n = trades.length;
+  const MIN_BUCKET = 5;          // ignore buckets smaller than this
+  const MIN_TOTAL = 12;          // engine needs some history to be meaningful
+  if (n < MIN_TOTAL) return { ready: false, total: n, need: MIN_TOTAL, insights: [] };
+
+  const isWin = (t) => t.pnl > 0;
+  const baseWin = trades.filter(isWin).length / n;
+
+  // Per-trade derived attributes (sequence within the trading day).
+  const byDay = {};
+  for (const t of trades) (byDay[(t.exit_time || '').slice(0, 10)] ??= []).push(t);
+  for (const d of Object.keys(byDay)) {
+    const list = byDay[d].sort((a, b) => a.entry_time.localeCompare(b.entry_time));
+    list.forEach((t, i) => {
+      t._idxInDay = i;
+      t._prev = i > 0 ? list[i - 1] : null;
+    });
+  }
+
+  const hour = (iso) => new Date(iso).getHours();
+  const dims = [
+    { dim: 'Entry time', of: (t) => {
+      const h = hour(t.entry_time);
+      if (h < 9) return 'before 09:00';
+      if (h < 10) return '09:00–09:59';
+      if (h < 11) return '10:00–10:59';
+      if (h < 12) return '11:00–11:59';
+      if (h < 14) return '12:00–13:59';
+      return '14:00 or later';
+    } },
+    { dim: 'Hold time', of: (t) => t.duration_s == null ? null
+      : t.duration_s < 60 ? 'under 1 min'
+      : t.duration_s < 300 ? '1–5 min'
+      : t.duration_s < 900 ? '5–15 min'
+      : t.duration_s < 3600 ? '15–60 min' : 'over 60 min' },
+    { dim: 'Direction', of: (t) => t.direction === 'long' ? 'longs' : 'shorts' },
+    { dim: 'Instrument', of: (t) => t.product },
+    { dim: 'Position size', of: (t) => t.qty <= 1 ? '1 contract' : t.qty <= 3 ? '2–3 contracts' : '4+ contracts' },
+    { dim: 'Weekday', of: (t) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(t.exit_time).getDay()] },
+    { dim: 'Sequence', of: (t) => !t._prev ? 'first trade of the day' : (t._prev.pnl > 0 ? 'right after a win' : 'right after a loss') },
+    { dim: 'Trade # of day', of: (t) => t._idxInDay < 2 ? '1st–2nd of the day' : t._idxInDay < 5 ? '3rd–5th of the day' : '6th+ of the day' },
+  ];
+
+  const out = [];
+  for (const { dim, of } of dims) {
+    const groups = {};
+    for (const t of trades) {
+      const b = of(t);
+      if (b == null) continue;
+      (groups[b] ??= []).push(t);
+    }
+    for (const [bucket, list] of Object.entries(groups)) {
+      if (list.length < MIN_BUCKET) continue;
+      const wins = list.filter(isWin).length;
+      const winRate = wins / list.length;
+      const pnl = list.reduce((s, t) => s + t.pnl, 0);
+      const expectancy = pnl / list.length;
+      const dWin = winRate - baseWin;
+      // Worth surfacing only if the win-rate gap is real OR it's clearly bleeding money.
+      const strong = Math.abs(dWin) >= 0.15 || (expectancy < 0 && pnl <= -100);
+      if (!strong) continue;
+      const good = dWin > 0 && pnl > 0;
+      out.push({
+        dim, bucket, n: list.length,
+        winRate: r2(winRate * 100), lossRate: r2((1 - winRate) * 100),
+        pnl: r2(pnl), expectancy: r2(expectancy),
+        baseWin: r2(baseWin * 100), deltaWin: r2(dWin * 100),
+        tone: good ? 'good' : 'bad',
+        small: list.length < 10,
+        impact: Math.abs(pnl),
+      });
+    }
+  }
+
+  // Rank: biggest dollar impact first; bad before good on ties.
+  out.sort((a, b) => b.impact - a.impact || (a.tone === 'bad' ? -1 : 1));
+  return { ready: true, total: n, baseWin: r2(baseWin * 100), insights: out.slice(0, 10) };
+}
+
 // Challenge / payout scoreboard — the "am I passing, and what's left?" view.
 // Combines the firm's rules (profit target, trailing drawdown, consistency,
 // qualifying days) into one verdict + a checklist with the exact $ remaining.

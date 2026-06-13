@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getJournal, productMap } from './db.js';
 import { importCsv } from './importer.js';
-import { summary, equity, patterns, risk, dashboard, challenge } from './stats.js';
+import { summary, equity, patterns, risk, dashboard, challenge, insights } from './stats.js';
 
 const app = express();
 app.use(express.json());
@@ -102,6 +102,7 @@ app.get('/api/summary', (req, res) => { const id = journalId(req, res); if (id) 
 app.get('/api/dashboard', (req, res) => { const id = journalId(req, res); if (id) res.json(dashboard(id)); });
 app.get('/api/equity', (req, res) => { const id = journalId(req, res); if (id) res.json(equity(id)); });
 app.get('/api/patterns', (req, res) => { const id = journalId(req, res); if (id) res.json(patterns(id)); });
+app.get('/api/insights', (req, res) => { const id = journalId(req, res); if (id) res.json(insights(id)); });
 app.get('/api/risk', (req, res) => { const id = journalId(req, res); if (id) res.json(risk(id)); });
 app.get('/api/challenge', (req, res) => { const id = journalId(req, res); if (id) res.json(challenge(id)); });
 
