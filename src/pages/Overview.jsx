@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 import { api, money, fmt } from '../api.js';
 import DayPanel from '../components/DayPanel.jsx';
+import Challenge from './Challenge.jsx';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
@@ -318,6 +319,9 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
               </div>
             );
           })()}
+
+          {/* Pass / payout scoreboard (folded in from the old Scoreboard tab) */}
+          <Challenge dataVersion={dataVersion} journal={journal} embedded />
 
           {/* Calendar — full width, MFFU style */}
           <div style={{ marginBottom: 14 }}>

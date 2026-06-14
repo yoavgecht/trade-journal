@@ -18,7 +18,7 @@ function Check({ ok, children }) {
   );
 }
 
-export default function Challenge({ dataVersion, journal }) {
+export default function Challenge({ dataVersion, journal, embedded }) {
   const [c, setC] = useState(null);
   const [v, setV] = useState(0);
   const [payDate, setPayDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -43,15 +43,20 @@ export default function Challenge({ dataVersion, journal }) {
 
   return (
     <>
-      <div className="row" style={{ marginBottom: 14 }}>
-        <h1 style={{ margin: 0 }}>Challenge — {journal.name}</h1>
-        {c.firm && <span className="market-chip">{c.firm} · {c.phase}</span>}
-        <div className="spacer" />
-        <span style={{ fontWeight: 800, fontSize: 15, color: statusColor }}>{statusLabel}</span>
-      </div>
+      {!embedded && (
+        <div className="row" style={{ marginBottom: 14 }}>
+          <h1 style={{ margin: 0 }}>Challenge — {journal.name}</h1>
+          {c.firm && <span className="market-chip">{c.firm} · {c.phase}</span>}
+          <div className="spacer" />
+          <span style={{ fontWeight: 800, fontSize: 15, color: statusColor }}>{statusLabel}</span>
+        </div>
+      )}
 
       <div className="panel" style={{ borderLeft: `4px solid ${statusColor}`, marginBottom: 14 }}>
-        <div style={{ fontWeight: 700, fontSize: 15 }}>{c.headline}</div>
+        <div className="row">
+          <div style={{ fontWeight: 700, fontSize: 15 }}>{c.headline}</div>
+          {embedded && <><div className="spacer" /><span style={{ fontWeight: 800, fontSize: 13, color: statusColor }}>{statusLabel}</span></>}
+        </div>
         {c.passedOn && (
           <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>
             🎯 Hit the {money(c.target)} target on <b>{new Date(c.passedOn + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</b> at {money(c.profitAtPass)} — the eval ends here; you move to a funded account (PA).
@@ -60,7 +65,9 @@ export default function Challenge({ dataVersion, journal }) {
         )}
       </div>
 
-      {/* Top numbers */}
+      {/* Top numbers — hidden when embedded on the Dashboard (the growth blocks
+          already show profit/equity/distance); only "safe to lose today" is unique. */}
+      {!embedded ? (
       <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 14 }}>
         <div className="panel">
           <div className="stat-label">Profit so far</div>
@@ -86,6 +93,19 @@ export default function Challenge({ dataVersion, journal }) {
           <div className="muted" style={{ fontSize: 12 }}>max drawdown {money(c.drawdown.trailingDd)}</div>
         </div>
       </div>
+      ) : (
+        <div className="panel" style={{ marginBottom: 14 }}>
+          <div className="row">
+            <div className="stat-label">Safe to lose today</div>
+            <div className="spacer" />
+            <b style={{ color: c.roomToday < (c.dailyLossLimit || c.drawdown.trailingDd) * 0.35 ? 'var(--red)' : undefined }}>{money(c.roomToday)}</b>
+          </div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            {c.todayPnl !== 0 && <>today so far {money(c.todayPnl)} · </>}
+            {c.dailyLossLimit > 0 ? `${money(c.dailyLossLimit)} daily limit, ` : ''}or {money(c.drawdown.distance)} to the floor
+          </div>
+        </div>
+      )}
 
       {/* Requirements checklist */}
       <div className="panel" style={{ marginBottom: 14 }}>

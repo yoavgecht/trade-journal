@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Routes, Route, NavLink, useNavigate } from 'react-router-dom';
 import Overview from './pages/Overview.jsx';
 import Portfolio from './pages/Portfolio.jsx';
-import Challenge from './pages/Challenge.jsx';
 import Journal from './pages/Journal.jsx';
 import Analytics from './pages/Analytics.jsx';
 import Patterns from './pages/Patterns.jsx';
@@ -237,7 +236,6 @@ export default function App() {
           <NavLink className="nav-link" to="/challenges">Challenges</NavLink>
           <NavLink className="nav-link" to="/funded">Funded</NavLink>
           <div className="nav-divider" />
-          <NavLink className="nav-link" to="/scoreboard">Scoreboard</NavLink>
           <NavLink className="nav-link" to="/analytics">Analytics</NavLink>
           <NavLink className="nav-link" to="/patterns">Patterns</NavLink>
           <NavLink className="nav-link" to="/trades">Trades</NavLink>
@@ -257,7 +255,6 @@ export default function App() {
               onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} />} />
             <Route path="/funded" element={<Portfolio dataVersion={dataVersion} filter="funded"
               onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} />} />
-            <Route path="/scoreboard" element={<Challenge dataVersion={dataVersion} journal={active} />} />
             <Route path="/analytics" element={<Analytics dataVersion={dataVersion} journal={active} />} />
             <Route path="/patterns" element={<Patterns dataVersion={dataVersion} />} />
             <Route path="/trades" element={<Trades dataVersion={dataVersion} />} />
