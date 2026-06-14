@@ -93,19 +93,28 @@ export default function Challenge({ dataVersion, journal, embedded }) {
           <div className="muted" style={{ fontSize: 12 }}>max drawdown {money(c.drawdown.trailingDd)}</div>
         </div>
       </div>
-      ) : (
-        <div className="panel" style={{ marginBottom: 14 }}>
-          <div className="row">
-            <div className="stat-label">Safe to lose today</div>
-            <div className="spacer" />
-            <b style={{ color: c.roomToday < (c.dailyLossLimit || c.drawdown.trailingDd) * 0.35 ? 'var(--red)' : undefined }}>{money(c.roomToday)}</b>
+      ) : (() => {
+        const low = c.drawdown.distance < c.drawdown.trailingDd * 0.35;
+        return (
+          <div className="panel" style={{ marginBottom: 14, borderLeft: `4px solid ${low ? 'var(--red)' : '#f59e0b'}` }}>
+            <div className="row" style={{ alignItems: 'flex-end' }}>
+              <div>
+                <div className="stat-label">⚠️ Minimum balance — don't go below this</div>
+                <div className="stat-value">{money(c.drawdown.threshold)}</div>
+              </div>
+              <div className="spacer" />
+              <div style={{ textAlign: 'right' }}>
+                <div className="stat-label">Room above it</div>
+                <div className="stat-value" style={{ color: low ? 'var(--red)' : undefined }}>{money(c.drawdown.distance)}</div>
+              </div>
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              Balance {money(c.drawdown.threshold + c.drawdown.distance)} — you have {money(c.drawdown.distance)} before the trailing stop liquidates the account.
+              {c.dailyLossLimit > 0 && <> Daily loss limit: {money(c.dailyLossLimit)}.</>}
+            </div>
           </div>
-          <div className="muted" style={{ fontSize: 12 }}>
-            {c.todayPnl !== 0 && <>today so far {money(c.todayPnl)} · </>}
-            {c.dailyLossLimit > 0 ? `${money(c.dailyLossLimit)} daily limit, ` : ''}or {money(c.drawdown.distance)} to the floor
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Requirements checklist */}
       <div className="panel" style={{ marginBottom: 14 }}>
