@@ -13,10 +13,12 @@ import { PRESETS } from './presets.js';
 // First-run "Create a Journal" (Edgewonk-style). Markets are fixed to NQ/ES
 // futures. A firm preset pre-fills the challenge rules; everything stays
 // editable (the Challenge page reads these to score pass/payout progress).
-function CreateJournalModal({ onCreated, onClose, blocking }) {
+function CreateJournalModal({ onCreated, onClose, blocking, initialPhase }) {
+  // Default to a preset matching the type the user clicked "+" on.
+  const defaultKey = initialPhase === 'funded' ? 'apex-50k-pa' : 'apex-50k-eval';
   const [name, setName] = useState('');
-  const [presetKey, setPresetKey] = useState('lucid-50k-eod');
-  const [r, setR] = useState({ ...PRESETS['lucid-50k-eod'] });
+  const [presetKey, setPresetKey] = useState(defaultKey);
+  const [r, setR] = useState({ ...PRESETS[defaultKey] });
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
 
@@ -235,14 +237,29 @@ export default function App() {
     <div className="layout">
       <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
         <div className="logo">📈 Trade Journal</div>
-        {journals.length > 0 && (
-          <select className="journal-select" value={activeId || ''} onChange={(e) => selectJournal(Number(e.target.value))}>
-            {journals.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
-          </select>
-        )}
+        {/* Accounts grouped by type: Challenges (evals) and Funded (PA). You can
+            run several of each. */}
+        <div className="acct-groups">
+          {[['Challenges', 'eval'], ['Funded (PA)', 'funded']].map(([title, phase]) => {
+            const list = journals.filter((j) => (phase === 'funded' ? j.phase === 'funded' : j.phase !== 'funded'));
+            return (
+              <div key={phase} className="acct-group">
+                <div className="acct-group-head">
+                  <span>{title}</span>
+                  <button className="acct-add" title={`Add ${title}`} onClick={() => setShowCreate(phase)}>＋</button>
+                </div>
+                {list.length === 0 && <div className="acct-empty">none yet</div>}
+                {list.map((j) => (
+                  <div key={j.id} className={`acct-item ${j.id === activeId ? 'on' : ''}`} onClick={() => selectJournal(j.id)}>
+                    {j.name}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
         <div className="sidebar-actions">
           <button onClick={() => setShowImport(true)} disabled={!active}>Import Trades</button>
-          <button className="ghost" onClick={() => setShowCreate(true)}>＋ Add Journal</button>
         </div>
         <div style={{ marginTop: 16 }}>
           <NavLink className="nav-link" to="/" end>Home</NavLink>
@@ -284,6 +301,7 @@ export default function App() {
       {(needsFirstJournal || showCreate) && (
         <CreateJournalModal
           blocking={needsFirstJournal}
+          initialPhase={typeof showCreate === 'string' ? showCreate : 'eval'}
           onClose={() => setShowCreate(false)}
           onCreated={async (j) => {
             const js = await api('/journals');

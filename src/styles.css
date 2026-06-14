@@ -139,6 +139,16 @@ textarea { width: 100%; resize: vertical; }
 .shot-add { display: flex; align-items: center; justify-content: center; height: 130px; border: 2px dashed var(--border); border-radius: 10px; color: var(--muted); cursor: pointer; font-size: 13px; }
 .shot-add:hover, .shot-add.over { border-color: var(--accent); color: var(--text); background: #eff4ff; }
 
+/* Sidebar account groups (Challenges / Funded) */
+.acct-groups { margin-bottom: 10px; }
+.acct-group { margin-bottom: 12px; }
+.acct-group-head { display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); padding: 0 6px 4px; }
+.acct-add { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; width: 22px; height: 22px; padding: 0; font-size: 14px; line-height: 1; cursor: pointer; }
+.acct-empty { font-size: 12px; color: var(--muted); padding: 2px 8px 4px; font-style: italic; }
+.acct-item { padding: 8px 10px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-item:hover { background: var(--panel2); }
+.acct-item.on { background: var(--accent); color: #fff; }
+
 /* Sidebar journal block */
 .journal-select { width: 100%; margin-bottom: 8px; font-weight: 600; }
 .sidebar-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }

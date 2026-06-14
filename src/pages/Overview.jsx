@@ -85,6 +85,18 @@ function Sparkline({ data }) {
   );
 }
 
+// MFFU-style stat block beside the growth curve.
+function GrowthBlock({ label, value, sub, signed }) {
+  const cls = signed == null ? '' : signed >= 0 ? 'pos' : 'neg';
+  return (
+    <div style={{ background: 'var(--panel2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+      <div className="stat-label">{label}</div>
+      <div className={`stat-value ${cls}`} style={{ fontSize: 19 }}>{value}</div>
+      {sub && <div className="muted" style={{ fontSize: 12 }}>{sub}</div>}
+    </div>
+  );
+}
+
 // ---- profit calendar -------------------------------------------------------
 
 function ProfitCalendar({ equity, conv, onDayClick }) {
@@ -259,31 +271,48 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
             </div>
           </div>
 
-          {/* Trading growth curve — balance vs the minimum-balance (trailing
-              drawdown) line, like the prop firm's analytics page. */}
-          {risk && risk.series.length > 0 && (
-            <div className="panel" style={{ marginBottom: 14 }}>
-              <h2>Trading Growth Curve <span className="muted" style={{ textTransform: 'none', fontWeight: 500 }}>
-                — distance to blowout: <b className={risk.distance < risk.trailingDd * 0.35 ? 'neg' : 'pos'}>{money(risk.distance)}</b>
-              </span></h2>
-              <ResponsiveContainer width="100%" height={400}>
-                <AreaChart data={risk.series}>
-                  <defs>
-                    <linearGradient id="growfill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#d4a017" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#d4a017" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
-                  <XAxis dataKey="date" stroke="#6b7280" fontSize={10} />
-                  <YAxis stroke="#6b7280" fontSize={11} domain={['auto', 'auto']} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} />
-                  <Tooltip contentStyle={tooltipStyle} formatter={(v) => money(v)} />
-                  <Area type="monotone" dataKey="balance" name="Balance" stroke="#d4a017" strokeWidth={2.5} fill="url(#growfill)" dot={false} />
-                  <Area type="stepAfter" dataKey="threshold" name="Minimum Balance" stroke="#dc2626" strokeWidth={2} strokeDasharray="5 3" fill="none" dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
+          {/* Trading growth curve (MFFU-style): balance vs the trailing-drawdown
+              floor, with the account's key blocks down the right. */}
+          {risk && risk.series.length > 0 && (() => {
+            const start = risk.startBalance;
+            const equity = risk.currentBalance;
+            const floor = risk.currentThreshold;
+            const aboveFloor = risk.distance;            // equity − floor
+            const funded = journal.phase === 'funded';
+            const pct = (n, base) => base ? `${n >= 0 ? '' : ''}${((n / base) * 100).toFixed(2)}%` : '—';
+            return (
+              <div className="panel" style={{ marginBottom: 14 }}>
+                <h2>Trading Growth Curve {risk.breachedOn && <span className="neg" style={{ textTransform: 'none' }}>· account blown {risk.breachedOn}</span>}</h2>
+                <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: 320 }}>
+                    <ResponsiveContainer width="100%" height={340}>
+                      <AreaChart data={risk.series}>
+                        <defs>
+                          <linearGradient id="growfill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#d4a017" stopOpacity={0.3} />
+                            <stop offset="100%" stopColor="#d4a017" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+                        <XAxis dataKey="date" stroke="#6b7280" fontSize={10} />
+                        <YAxis stroke="#6b7280" fontSize={11} domain={['auto', 'auto']} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} />
+                        <Tooltip contentStyle={tooltipStyle} formatter={(v) => money(v)} />
+                        <Area type="monotone" dataKey="balance" name="Balance" stroke="#d4a017" strokeWidth={2.5} fill="url(#growfill)" dot={false} />
+                        <Area type="stepAfter" dataKey="threshold" name={funded ? 'Buffer' : 'Trailing stop'} stroke="#dc2626" strokeWidth={2} strokeDasharray="5 3" fill="none" dot={false} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div style={{ width: 230, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <GrowthBlock label="Net Profit / Loss" value={money(d.totalPnl)} sub={pct(d.totalPnl, start)} signed={d.totalPnl} />
+                    <GrowthBlock label={funded ? 'Profit Above Buffer' : 'Profit Above Trailing Stop'}
+                      value={money(aboveFloor)} sub={pct(aboveFloor, equity)} signed={aboveFloor} />
+                    <GrowthBlock label="Current Equity" value={money(equity)} sub={pct(d.totalPnl, start)} />
+                    <GrowthBlock label="Max Drawdown" value={money(floor)} sub={`-${pct(risk.trailingDd, start)}`} />
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Calendar — full width, MFFU style */}
           <div style={{ marginBottom: 14 }}>
