@@ -233,7 +233,11 @@ export function risk(journalId) {
 // Daily Journal: one row per trading day with the day's stats, an intraday
 // cumulative-P&L sparkline, and the free-text daily log note. Most-recent first.
 export function dailyJournal(journalId) {
-  const trades = db.prepare('SELECT * FROM trades WHERE journal_id = ? AND exit_time IS NOT NULL ORDER BY exit_time').all(journalId);
+  const trades = db.prepare(`
+    SELECT t.*, m.screenshots FROM trades t
+    LEFT JOIN trade_meta m ON m.trade_id = t.id
+    WHERE t.journal_id = ? AND t.exit_time IS NOT NULL ORDER BY t.exit_time
+  `).all(journalId);
   const manual = db.prepare('SELECT date, pnl, trades, note FROM manual_days WHERE journal_id = ?').all(journalId);
   const logs = Object.fromEntries(db.prepare('SELECT date, note FROM day_logs WHERE journal_id = ?').all(journalId).map((r) => [r.date, r.note]));
 
@@ -251,6 +255,8 @@ export function dailyJournal(journalId) {
     const m = manual.find((x) => x.date === date);
     let cum = 0;
     const points = list.map((t, i) => { cum += t.pnl; return { i: i + 1, cum: r2(cum) }; });
+    // All screenshots from the day's trades (view-only on the Daily Log).
+    const screenshots = list.flatMap((t) => { try { return JSON.parse(t.screenshots || '[]'); } catch { return []; } });
     return {
       date,
       net: r2(net + (m ? m.pnl : 0)),
@@ -265,6 +271,7 @@ export function dailyJournal(journalId) {
       manual: m ? r2(m.pnl) : null,
       note: logs[date] || '',
       points,
+      screenshots,
     };
   });
   return out;

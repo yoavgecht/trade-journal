@@ -61,6 +61,18 @@ function DailyLog({ day, onClose, onSaved }) {
           <Stat label="Volume" value={day.volume} />
           <Stat label="Profit factor" value={day.profitFactor == null ? '—' : fmt(day.profitFactor)} />
         </div>
+        {day.screenshots && day.screenshots.length > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <label className="stat-label">Screenshots ({day.screenshots.length}) — from this day's trades</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+              {day.screenshots.map((name) => (
+                <img key={name} src={`/api/screenshots/${name}`} alt="trade screenshot"
+                  onClick={() => window.open(`/api/screenshots/${name}`, '_blank')}
+                  style={{ height: 110, borderRadius: 8, border: '1px solid var(--border)', cursor: 'zoom-in' }} />
+              ))}
+            </div>
+          </div>
+        )}
         <label className="stat-label">Journal note</label>
         <textarea rows={8} value={note} onChange={(e) => setNote(e.target.value)} style={{ marginTop: 4 }}
           placeholder={'How did the day go? Did you follow your plan?\nWhat worked, what didn’t, what to fix tomorrow.'} />
@@ -91,6 +103,7 @@ export default function Journal({ dataVersion }) {
               <b>{new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</b>
               <span className={`${d.net >= 0 ? 'pos' : 'neg'}`} style={{ fontWeight: 700 }}>· {money(d.net)}</span>
               {d.note && <span title="has a note">📝</span>}
+              {d.screenshots && d.screenshots.length > 0 && <span title="has screenshots">📷{d.screenshots.length}</span>}
               <div className="spacer" />
               <span className="muted" style={{ fontSize: 12 }}>Daily log ›</span>
             </div>
