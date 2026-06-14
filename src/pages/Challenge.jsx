@@ -52,6 +52,12 @@ export default function Challenge({ dataVersion, journal }) {
 
       <div className="panel" style={{ borderLeft: `4px solid ${statusColor}`, marginBottom: 14 }}>
         <div style={{ fontWeight: 700, fontSize: 15 }}>{c.headline}</div>
+        {c.passedOn && (
+          <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>
+            🎯 Hit the {money(c.target)} target on <b>{new Date(c.passedOn + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</b> at {money(c.profitAtPass)} — the eval ends here; you move to a funded account (PA).
+            {c.daysAfterPass > 0 && <> Your {c.daysAfterPass} day(s) of trading after that wouldn't be on this eval (they'd belong to the PA).</>}
+          </div>
+        )}
       </div>
 
       {/* Top numbers */}

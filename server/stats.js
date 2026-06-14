@@ -332,6 +332,16 @@ export function challenge(journalId) {
   // --- Profit target ---
   const targetMet = target > 0 ? profit >= target : true;
   const targetRemaining = Math.max(0, target - profit);
+  // An EVAL ends the moment you hit the target — you pass and move to a funded
+  // account (Apex PA). So find the FIRST day cumulative profit reached the
+  // target: that's the pass point, and trades after it wouldn't be on the eval.
+  let passedOn = null, profitAtPass = null, daysAfterPass = 0;
+  if (j.phase !== 'funded' && target > 0) {
+    for (const d of eq) {
+      if (d.cum >= target) { passedOn = d.date; profitAtPass = r2(d.cum); break; }
+    }
+    if (passedOn) daysAfterPass = eq.filter((d) => d.date > passedOn).length;
+  }
 
   // --- Consistency: largest single DAY profit / total profit must be ≤ the
   // limit (Lucid/Apex rule). Lucid adds a small "cushion" (extra percentage
@@ -455,6 +465,9 @@ export function challenge(journalId) {
     targetMet,
     targetRemaining: r2(targetRemaining),
     targetPct: target > 0 ? r2(Math.min(100, (profit / target) * 100)) : null,
+    passedOn,
+    profitAtPass,
+    daysAfterPass,
     drawdown: {
       trailingDd: rk.trailingDd,
       distance: rk.distance,
