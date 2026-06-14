@@ -230,6 +230,26 @@ export function risk(journalId) {
   };
 }
 
+// Cross-account portfolio overview — one compact summary row per journal for
+// the all-accounts screen.
+export function overviewAll() {
+  const journals = db.prepare('SELECT * FROM journals ORDER BY id').all();
+  return journals.map((j) => {
+    const c = challenge(j.id);
+    const equity = c.drawdown.threshold + c.drawdown.distance;
+    return {
+      id: j.id, name: j.name, firm: j.firm, phase: j.phase,
+      status: c.status, headline: c.headline,
+      startBalance: j.start_balance,
+      profit: c.profit, target: c.target, targetPct: c.targetPct,
+      equity: r2(equity), distance: c.drawdown.distance, breachedOn: c.drawdown.breachedOn,
+      tradingDays: c.tradingDays, passedOn: c.passedOn,
+      payoutEligible: c.payout ? c.payout.eligible : null,
+      payoutsTaken: c.payout ? c.payout.taken : null,
+    };
+  });
+}
+
 // Pattern DISCOVERY engine. Slices trades across many dimensions and surfaces
 // the buckets whose win-rate / expectancy deviate hard from the overall
 // baseline — "entries before 10:00 lose 80% of the time" type findings — with

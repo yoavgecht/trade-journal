@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getJournal, productMap } from './db.js';
 import { importCsv } from './importer.js';
-import { summary, equity, patterns, risk, dashboard, challenge, insights } from './stats.js';
+import { summary, equity, patterns, risk, dashboard, challenge, insights, overviewAll } from './stats.js';
 
 const app = express();
 app.use(express.json());
@@ -30,6 +30,9 @@ function journalId(req, res) {
 app.get('/api/journals', (_req, res) => {
   res.json(db.prepare('SELECT * FROM journals ORDER BY id').all());
 });
+
+// Cross-account overview (all journals at once) — not journal-scoped.
+app.get('/api/overview', (_req, res) => res.json(overviewAll()));
 
 app.post('/api/journals', (req, res) => {
   const b = req.body || {};
