@@ -109,6 +109,13 @@ textarea { width: 100%; resize: vertical; }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
 .market-chip { display: inline-block; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-weight: 600; font-size: 13px; }
+
+/* Read-only account-rules card in the create modal */
+.rules-card { background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin: 14px 0 6px; }
+.rules-card-head { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); margin-bottom: 8px; display: flex; align-items: center; }
+.rules-card-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.rules-card-row:last-child { border-bottom: 0; }
+.link-btn { background: none; border: 0; color: var(--accent); font-weight: 600; font-size: 13px; padding: 6px 0; cursor: pointer; }
 .infobox { background: #fefce8; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #713f12; margin-bottom: 12px; }
 
 /* Trade slide-over panel */

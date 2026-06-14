@@ -10,122 +10,102 @@ import Settings from './pages/Settings.jsx';
 import { api, setActiveJournalId } from './api.js';
 import { PRESETS } from './presets.js';
 
+const money0 = (n) => `$${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+
 // First-run "Create a Journal" (Edgewonk-style). Markets are fixed to NQ/ES
 // futures. A firm preset pre-fills the challenge rules; everything stays
 // editable (the Challenge page reads these to score pass/payout progress).
 function CreateJournalModal({ onCreated, onClose, blocking, initialPhase }) {
-  // Default to a preset matching the type the user clicked "+" on.
-  const defaultKey = initialPhase === 'funded' ? 'apex-50k-pa' : 'apex-50k-eval';
+  const isFunded = initialPhase === 'funded';
+  // Only presets matching the type the user is adding (challenge vs funded).
+  const options = Object.entries(PRESETS).filter(([k, p]) =>
+    (isFunded ? p.phase === 'funded' : p.phase !== 'funded') || k === 'custom');
+  const defaultKey = options[0][0];
   const [name, setName] = useState('');
   const [presetKey, setPresetKey] = useState(defaultKey);
   const [r, setR] = useState({ ...PRESETS[defaultKey] });
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const applyPreset = (key) => {
-    setPresetKey(key);
-    setR({ ...PRESETS[key] });
-  };
+  const applyPreset = (key) => { setPresetKey(key); setR({ ...PRESETS[key] }); };
   const set = (k, v) => setR((cur) => ({ ...cur, [k]: v }));
 
   const create = async () => {
     if (!name.trim()) return;
     setBusy(true);
-    const j = await api('/journals', {
-      method: 'POST',
-      body: { name: name.trim(), deposit_date: date, ...r },
-    });
+    const j = await api('/journals', { method: 'POST', body: { name: name.trim(), deposit_date: date, ...r } });
     setBusy(false);
     onCreated(j);
   };
+
+  // Read-only rule rows derived from the chosen preset (the firm defines these).
+  const ruleRows = [
+    ['Account size', money0(r.start_balance)],
+    r.profit_target > 0 && ['Profit target', money0(r.profit_target)],
+    ['Max drawdown (EOD)', money0(r.trailing_dd)],
+    r.daily_loss_limit > 0 && ['Daily loss limit', money0(r.daily_loss_limit)],
+    r.consistency_pct > 0 && ['Consistency', `${r.consistency_pct}%`],
+    r.max_contracts > 0 && ['Max contracts', `${r.max_contracts} mini`],
+    ['Drawdown stops', r.dd_stop_mode === 'never' ? 'never (trails peak)' : r.dd_stop_mode === 'target' ? 'at start + target' : `at start + ${money0(r.dd_buffer)}`],
+    r.min_profit_days > 0 && ['Payout', `${r.min_profit_days} days ≥ ${money0(r.min_profit_day_amount)}`],
+  ].filter(Boolean);
 
   return (
     <div className="modal-overlay">
       <div className="modal">
         {!blocking && <button className="x" onClick={onClose}>✕</button>}
-        <h3>Create a Journal</h3>
-        <h2>General Details</h2>
+        <h3>New {isFunded ? 'Funded Account' : 'Challenge'}</h3>
+
         <div className="field">
-          <label>Journal Name</label>
+          <label>Name</label>
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Lucid 50k Eval #1" onKeyDown={(e) => e.key === 'Enter' && create()} />
+            placeholder={isFunded ? 'e.g. Apex 50k PA #1' : 'e.g. Apex 50k Eval #1'}
+            onKeyDown={(e) => e.key === 'Enter' && create()} />
         </div>
-        <div className="field-row">
-          <div className="field">
-            <label>Firm preset</label>
-            <select value={presetKey} onChange={(e) => applyPreset(e.target.value)}>
-              {Object.entries(PRESETS).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label>Markets</label>
-            <div style={{ paddingTop: 4 }}><span className="market-chip">Futures — NQ / ES</span></div>
-          </div>
+        <div className="field">
+          <label>Account</label>
+          <select value={presetKey} onChange={(e) => applyPreset(e.target.value)}>
+            {options.map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Start date</label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
 
-        <h2 style={{ marginTop: 16 }}>Account & Rules</h2>
-        <div className="field-row">
-          <div className="field">
-            <label>Account Size ($)</label>
-            <input type="number" value={r.start_balance} onChange={(e) => set('start_balance', Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>Profit Target ($)</label>
-            <input type="number" value={r.profit_target} onChange={(e) => set('profit_target', Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>Start Date</label>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          </div>
+        {/* The preset already defines the rules — show them, don't ask. */}
+        <div className="rules-card">
+          <div className="rules-card-head">Account Rules <span className="market-chip" style={{ marginLeft: 8 }}>NQ / ES</span></div>
+          {ruleRows.map(([k, v]) => (
+            <div key={k} className="rules-card-row"><span>{k}</span><b>{v}</b></div>
+          ))}
         </div>
-        <div className="field-row">
-          <div className="field">
-            <label>Max Drawdown ($)</label>
-            <input type="number" value={r.trailing_dd} onChange={(e) => set('trailing_dd', Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>Daily Loss Limit ($, 0=none)</label>
-            <input type="number" value={r.daily_loss_limit} onChange={(e) => set('daily_loss_limit', Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>Consistency (%, 0=none)</label>
-            <input type="number" value={r.consistency_pct} onChange={(e) => set('consistency_pct', Number(e.target.value))} />
-          </div>
-        </div>
-        <div className="field-row">
-          <div className="field">
-            <label>Payout: qualifying days</label>
-            <input type="number" value={r.min_profit_days} onChange={(e) => set('min_profit_days', Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>…each day ≥ ($)</label>
-            <input type="number" value={r.min_profit_day_amount} onChange={(e) => set('min_profit_day_amount', Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <label>Max contracts (mini)</label>
-            <input type="number" value={r.max_contracts} onChange={(e) => set('max_contracts', Number(e.target.value))} />
-          </div>
-        </div>
-        <div className="field-row">
-          <div className="field">
-            <label>EOD drawdown stops trailing</label>
-            <select value={r.dd_stop_mode || 'never'} onChange={(e) => set('dd_stop_mode', e.target.value)}>
-              <option value="never">Never — trails peak forever (Tradovate eval)</option>
-              <option value="buffer">At start + buffer (PA / funded)</option>
-              <option value="target">At start + profit target (Rithmic/WC eval)</option>
-            </select>
-          </div>
-          {r.dd_stop_mode === 'buffer' && (
-            <div className="field">
-              <label>Buffer ($)</label>
-              <input type="number" value={r.dd_buffer ?? 100} onChange={(e) => set('dd_buffer', Number(e.target.value))} />
+
+        <button className="link-btn" onClick={() => setAdvanced((a) => !a)}>
+          {advanced ? '▾ Hide custom rules' : '▸ Customize rules (advanced)'}
+        </button>
+        {advanced && (
+          <div className="field-row" style={{ flexWrap: 'wrap', marginTop: 8 }}>
+            <div className="field"><label>Size ($)</label><input type="number" value={r.start_balance} onChange={(e) => set('start_balance', Number(e.target.value))} /></div>
+            <div className="field"><label>Target ($)</label><input type="number" value={r.profit_target} onChange={(e) => set('profit_target', Number(e.target.value))} /></div>
+            <div className="field"><label>Max DD ($)</label><input type="number" value={r.trailing_dd} onChange={(e) => set('trailing_dd', Number(e.target.value))} /></div>
+            <div className="field"><label>DLL ($)</label><input type="number" value={r.daily_loss_limit} onChange={(e) => set('daily_loss_limit', Number(e.target.value))} /></div>
+            <div className="field"><label>Consistency (%)</label><input type="number" value={r.consistency_pct} onChange={(e) => set('consistency_pct', Number(e.target.value))} /></div>
+            <div className="field"><label>Max contracts</label><input type="number" value={r.max_contracts} onChange={(e) => set('max_contracts', Number(e.target.value))} /></div>
+            <div className="field"><label>DD stops</label>
+              <select value={r.dd_stop_mode || 'never'} onChange={(e) => set('dd_stop_mode', e.target.value)}>
+                <option value="never">never (trails peak)</option>
+                <option value="buffer">start + buffer</option>
+                <option value="target">start + target</option>
+              </select>
             </div>
-          )}
-        </div>
-        <div className="infobox">Presets are a starting point — verify against your firm's current rules.</div>
+            {r.dd_stop_mode === 'buffer' && <div className="field"><label>Buffer ($)</label><input type="number" value={r.dd_buffer ?? 100} onChange={(e) => set('dd_buffer', Number(e.target.value))} /></div>}
+          </div>
+        )}
 
-        <div className="row" style={{ marginTop: 8 }}>
-          <button onClick={create} disabled={busy || !name.trim()}>Create Journal</button>
+        <div className="row" style={{ marginTop: 14 }}>
+          <button onClick={create} disabled={busy || !name.trim()}>Create {isFunded ? 'Funded Account' : 'Challenge'}</button>
           {!blocking && <button className="ghost" onClick={onClose}>Cancel</button>}
         </div>
       </div>
