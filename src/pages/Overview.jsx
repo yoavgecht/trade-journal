@@ -200,6 +200,11 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
 
   return (
     <>
+      <div className="row" style={{ marginBottom: 4 }}>
+        <h1 style={{ margin: 0 }}>{journal.name}</h1>
+        <span className="market-chip" style={{ fontSize: 11 }}>{journal.phase === 'funded' ? 'Funded (PA)' : 'Challenge'}</span>
+        {journal.last_import_at && <span className="muted" style={{ fontSize: 12 }}>· last import {new Date(journal.last_import_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
+      </div>
       <div className="row" style={{ marginBottom: 14 }}>
         <div className="unit-tabs">
           <button className={`unit-tab ${unit === 'usd' ? 'on' : ''}`} onClick={() => setUnit('usd')}>United States Dollar (USD)</button>

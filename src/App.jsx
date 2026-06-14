@@ -188,12 +188,15 @@ export default function App() {
   const [balance, setBalance] = useState(null);
   const navigate = useNavigate();
 
-  // Load journals; restore last active (or first).
+  // Load journals; default the Dashboard to the MOST RECENTLY IMPORTED account
+  // (fall back to the last one you viewed, then the first).
   useEffect(() => {
     api('/journals').then((js) => {
       setJournals(js);
-      const saved = Number(localStorage.getItem('activeJournal'));
-      const pick = js.find((j) => j.id === saved) || js[0];
+      const byImport = [...js].filter((j) => j.last_import_at)
+        .sort((a, b) => b.last_import_at.localeCompare(a.last_import_at))[0];
+      const saved = js.find((j) => j.id === Number(localStorage.getItem('activeJournal')));
+      const pick = byImport || saved || js[0];
       if (pick) selectJournal(pick.id);
     });
   }, []);
@@ -219,40 +222,27 @@ export default function App() {
     <div className="layout">
       <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
         <div className="logo">📈 Trade Journal</div>
-        {/* Accounts grouped by type: Challenges (evals) and Funded (PA). You can
-            run several of each. */}
-        <div className="acct-groups">
-          {[['Challenges', 'eval'], ['Funded (PA)', 'funded']].map(([title, phase]) => {
-            const list = journals.filter((j) => (phase === 'funded' ? j.phase === 'funded' : j.phase !== 'funded'));
-            return (
-              <div key={phase} className="acct-group">
-                <div className="acct-group-head">
-                  <span>{title}</span>
-                  <button className="acct-add" title={`Add ${title}`} onClick={() => setShowCreate(phase)}>＋</button>
-                </div>
-                {list.length === 0 && <div className="acct-empty">none yet</div>}
-                {list.map((j) => (
-                  <div key={j.id} className={`acct-item ${j.id === activeId ? 'on' : ''}`} onClick={() => selectJournal(j.id)}>
-                    {j.name}
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
+        {/* One clean account switcher (the Dashboard follows it) + import. */}
+        {journals.length > 0 && (
+          <select className="journal-select" value={activeId || ''} onChange={(e) => selectJournal(Number(e.target.value))}>
+            {journals.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
+          </select>
+        )}
         <div className="sidebar-actions">
-          <button onClick={() => setShowImport(true)} disabled={!active}>Import Trades</button>
+          <button onClick={() => setShowImport(true)} disabled={!active}>＋ Import Trades</button>
         </div>
-        <div style={{ marginTop: 16 }}>
-          <NavLink className="nav-link" to="/accounts">Accounts</NavLink>
-          <NavLink className="nav-link" to="/" end>Home</NavLink>
-          <NavLink className="nav-link" to="/challenge">Challenge</NavLink>
+        <nav style={{ marginTop: 14 }}>
+          <NavLink className="nav-link" to="/" end>Dashboard</NavLink>
           <NavLink className="nav-link" to="/journal">Daily Journal</NavLink>
+          <NavLink className="nav-link" to="/challenges">Challenges</NavLink>
+          <NavLink className="nav-link" to="/funded">Funded</NavLink>
+          <div className="nav-divider" />
+          <NavLink className="nav-link" to="/scoreboard">Scoreboard</NavLink>
           <NavLink className="nav-link" to="/analytics">Analytics</NavLink>
           <NavLink className="nav-link" to="/patterns">Patterns</NavLink>
           <NavLink className="nav-link" to="/trades">Trades</NavLink>
           <NavLink className="nav-link" to="/settings">Settings</NavLink>
-        </div>
+        </nav>
         <div className="sidebar-balance">
           <div className="b">{balance == null ? '—' : `$${balance.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}</div>
           <div className="l">Account Balance</div>
@@ -262,13 +252,14 @@ export default function App() {
         {active && (
           <Routes>
             <Route path="/" element={<Overview dataVersion={dataVersion} journal={active} onOpenImport={() => setShowImport(true)} />} />
-            <Route path="/challenge" element={<Challenge dataVersion={dataVersion} journal={active} />} />
             <Route path="/journal" element={<Journal dataVersion={dataVersion} />} />
+            <Route path="/challenges" element={<Portfolio dataVersion={dataVersion} filter="eval"
+              onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} />} />
+            <Route path="/funded" element={<Portfolio dataVersion={dataVersion} filter="funded"
+              onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} />} />
+            <Route path="/scoreboard" element={<Challenge dataVersion={dataVersion} journal={active} />} />
             <Route path="/analytics" element={<Analytics dataVersion={dataVersion} journal={active} />} />
             <Route path="/patterns" element={<Patterns dataVersion={dataVersion} />} />
-            <Route path="/accounts" element={<Portfolio dataVersion={dataVersion}
-              onOpen={(id) => { selectJournal(id); navigate('/'); }}
-              onAdd={(phase) => setShowCreate(phase)} />} />
             <Route path="/trades" element={<Trades dataVersion={dataVersion} />} />
             <Route path="/settings" element={<Settings journal={active} onChanged={(js) => {
               if (js) setJournals(js);
@@ -294,6 +285,7 @@ export default function App() {
             setJournals(js);
             setShowCreate(false);
             selectJournal(j.id);
+            navigate('/');
           }}
         />
       )}

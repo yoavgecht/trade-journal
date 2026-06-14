@@ -153,6 +153,7 @@ for (const [col, ddl] of [
   ['default_risk', 'default_risk REAL NOT NULL DEFAULT 0'], // $ risked/trade when no per-trade stop set
   ['dd_stop_mode', "dd_stop_mode TEXT NOT NULL DEFAULT 'never'"],
   ['dd_buffer', 'dd_buffer REAL NOT NULL DEFAULT 100'],
+  ['last_import_at', 'last_import_at TEXT'], // set on each CSV import → Dashboard defaults to the most recent
 ]) {
   if (jCols.length && !jCols.includes(col)) db.exec(`ALTER TABLE journals ADD COLUMN ${ddl}`);
 }

@@ -21,6 +21,7 @@ a { color: inherit; text-decoration: none; }
 .nav-link { display: block; padding: 9px 12px; border-radius: 8px; color: var(--muted); margin-bottom: 2px; font-weight: 500; }
 .nav-link.active { background: var(--panel2); color: var(--text); }
 .nav-link:hover { color: var(--text); }
+.nav-divider { height: 1px; background: var(--border); margin: 10px 6px; }
 .main { flex: 1; padding: 24px 28px; max-width: 1680px; }
 
 h1 { font-size: 20px; margin: 0 0 18px; }

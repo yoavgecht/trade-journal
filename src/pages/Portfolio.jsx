@@ -48,40 +48,35 @@ function AccountCard({ a, onOpen }) {
   );
 }
 
-export default function Portfolio({ dataVersion, onOpen, onAdd }) {
+export default function Portfolio({ dataVersion, onOpen, onAdd, filter }) {
   const [rows, setRows] = useState(null);
   useEffect(() => { api('/overview').then(setRows); }, [dataVersion]);
   if (!rows) return null;
 
-  const groups = [['Challenges', rows.filter((a) => a.phase !== 'funded')], ['Funded (PA)', rows.filter((a) => a.phase === 'funded')]];
-  const totalEquity = rows.reduce((s, a) => s + a.equity, 0);
-  const totalPnl = rows.reduce((s, a) => s + a.profit, 0);
+  const isFunded = filter === 'funded';
+  const title = isFunded ? 'Funded Accounts (PA)' : 'Challenges';
+  const list = rows.filter((a) => (isFunded ? a.phase === 'funded' : a.phase !== 'funded'));
+  const totalEquity = list.reduce((s, a) => s + a.equity, 0);
+  const totalPnl = list.reduce((s, a) => s + a.profit, 0);
 
   return (
     <>
       <div className="row" style={{ marginBottom: 14 }}>
-        <h1 style={{ margin: 0 }}>Accounts</h1>
+        <h1 style={{ margin: 0 }}>{title}</h1>
+        <button className="ghost" style={{ padding: '5px 12px' }} onClick={() => onAdd(isFunded ? 'funded' : 'eval')}>
+          ＋ New {isFunded ? 'Funded Account' : 'Challenge'}
+        </button>
         <div className="spacer" />
-        <span className="muted">Total equity {money(totalEquity)} · </span>
-        <span className={totalPnl >= 0 ? 'pos' : 'neg'} style={{ fontWeight: 700 }}>{money(totalPnl)}</span>
+        {list.length > 0 && <><span className="muted">Equity {money(totalEquity)} · </span>
+          <span className={totalPnl >= 0 ? 'pos' : 'neg'} style={{ fontWeight: 700 }}>{money(totalPnl)}</span></>}
       </div>
-
-      {groups.map(([title, list]) => (
-        <div key={title} style={{ marginBottom: 18 }}>
-          <div className="row" style={{ marginBottom: 8 }}>
-            <h2 style={{ margin: 0 }}>{title} ({list.length})</h2>
-            <button className="ghost" style={{ padding: '4px 10px', fontSize: 12 }}
-              onClick={() => onAdd(title === 'Funded (PA)' ? 'funded' : 'eval')}>＋ Add</button>
-          </div>
-          {list.length === 0 ? (
-            <div className="panel muted">No {title.toLowerCase()} yet.</div>
-          ) : (
-            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
-              {list.map((a) => <AccountCard key={a.id} a={a} onOpen={onOpen} />)}
-            </div>
-          )}
+      {list.length === 0 ? (
+        <div className="panel muted">No {isFunded ? 'funded accounts' : 'challenges'} yet — click “New” to add one.</div>
+      ) : (
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+          {list.map((a) => <AccountCard key={a.id} a={a} onOpen={onOpen} />)}
         </div>
-      ))}
+      )}
     </>
   );
 }

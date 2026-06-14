@@ -102,6 +102,7 @@ app.post('/api/import', upload.array('files'), (req, res) => {
       results.push({ file: f.originalname, error: e.message });
     }
   }
+  db.prepare('UPDATE journals SET last_import_at = ? WHERE id = ?').run(new Date().toISOString(), id);
   res.json({ results });
 });
 
