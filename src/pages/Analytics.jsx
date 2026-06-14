@@ -20,6 +20,39 @@ function enrich(trades) {
   return ts;
 }
 
+// Fine-grained trade-duration buckets (MFFU-style) — built for scalping, where
+// most trades live in the seconds-to-minutes range.
+const HOLD_ORDER = ['0-15s', '15-45s', '45s-1m', '1-2m', '2-5m', '5-10m', '10-30m', '30m-1h', '1-2h', '2-4h', '4-24h'];
+function holdBucket(s) {
+  if (s == null) return null;
+  return s < 15 ? '0-15s' : s < 45 ? '15-45s' : s < 60 ? '45s-1m'
+    : s < 120 ? '1-2m' : s < 300 ? '2-5m' : s < 600 ? '5-10m' : s < 1800 ? '10-30m'
+    : s < 3600 ? '30m-1h' : s < 7200 ? '1-2h' : s < 14400 ? '2-4h' : '4-24h';
+}
+
+// Horizontal bar chart (MFFU-style): category buckets down the left, value bars
+// across. `color(d)` picks the bar color per row.
+function HBars({ title, data, dataKey, fmt, color, domain }) {
+  return (
+    <div>
+      <div className="muted" style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{title}</div>
+      <ResponsiveContainer width="100%" height={data.length * 26 + 24}>
+        <BarChart layout="vertical" data={data} margin={{ top: 0, right: 44, bottom: 0, left: 0 }}>
+          <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" horizontal={false} />
+          <XAxis type="number" hide domain={domain || ['auto', 'auto']} />
+          <YAxis type="category" dataKey="bucket" width={52} stroke="#6b7280" fontSize={10} tickLine={false} axisLine={false} />
+          <Tooltip contentStyle={tip} formatter={(v) => fmt(v)}
+            labelFormatter={(b) => { const s = data.find((x) => x.bucket === b); return `${b} · ${s?.n} trades`; }} />
+          <ReferenceLine x={0} stroke="#9ca3af" />
+          <Bar dataKey={dataKey} radius={[0, 3, 3, 0]} label={{ position: 'right', fontSize: 10, fill: '#6b7280', formatter: (v) => fmt(v) }}>
+            {data.map((d, i) => <Cell key={i} fill={color(d)} />)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 // Dimension definitions: label + bucketing fn + canonical bucket order.
 const DIMENSIONS = {
   'Entry hour': {
@@ -27,10 +60,8 @@ const DIMENSIONS = {
     order: (a, b) => parseInt(a) - parseInt(b),
   },
   'Hold time': {
-    of: (t) => t.duration_s == null ? null
-      : t.duration_s < 60 ? 'under 1m' : t.duration_s < 300 ? '1–5m'
-      : t.duration_s < 900 ? '5–15m' : t.duration_s < 3600 ? '15–60m' : 'over 60m',
-    order: (a, b) => ['under 1m', '1–5m', '5–15m', '15–60m', 'over 60m'].indexOf(a) - ['under 1m', '1–5m', '5–15m', '15–60m', 'over 60m'].indexOf(b),
+    of: (t) => holdBucket(t.duration_s),
+    order: (a, b) => HOLD_ORDER.indexOf(a) - HOLD_ORDER.indexOf(b),
   },
   Direction: { of: (t) => t.direction, order: (a) => (a === 'long' ? -1 : 1) },
   Instrument: { of: (t) => t.product, order: (a, b) => a.localeCompare(b) },
@@ -135,9 +166,25 @@ export default function Analytics({ dataVersion, journal }) {
   const adjNet = Math.round(adjCum);
   const delta = adjNet - actualNet;
 
+  const durStats = bucketStats(trades, 'Hold time');
+
   return (
     <>
       <h1>Trade Analytics</h1>
+
+      {/* By trade duration — P&L / count / win-rate together (MFFU-style),
+          fine-grained buckets for scalping. */}
+      <div className="panel" style={{ marginBottom: 14 }}>
+        <h2>By trade duration</h2>
+        <div className="grid" style={{ gridTemplateColumns: '1.2fr 1fr 1fr' }}>
+          <HBars title="Performance ($)" data={durStats} dataKey="pnl"
+            fmt={money} color={(d) => (d.pnl >= 0 ? '#16a34a' : '#dc2626')} />
+          <HBars title="Trade count" data={durStats} dataKey="n"
+            fmt={(v) => v} color={() => '#60a5fa'} />
+          <HBars title="Win rate" data={durStats} dataKey="winRate"
+            fmt={(v) => `${v}%`} color={(d) => (d.winRate >= 50 ? '#16a34a' : '#dc2626')} domain={[0, 100]} />
+        </div>
+      </div>
 
       {/* Per-variable breakdown */}
       <div className="panel" style={{ marginBottom: 14 }}>
