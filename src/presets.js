@@ -23,12 +23,15 @@ export const PRESETS = {
     dd_stop_mode: 'target', dd_buffer: 100, daily_loss_limit: 1000,
     consistency_pct: 0, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 6,
   },
+  // EOD PA (funded): drawdown $2,000 (incl. UNREALIZED PnL), locks at start+$100.
+  // Contracts + DLL are TIER-BASED (scale as the account grows) — 4 is the 50K
+  // base tier; adjust as you scale. 100% payout split.
   'apex-50k-pa': {
     label: 'Apex 50K — EOD PA / Funded',
     firm: 'Apex', phase: 'funded',
     start_balance: 50000, profit_target: 0, trailing_dd: 2000,
     dd_stop_mode: 'buffer', dd_buffer: 100, daily_loss_limit: 1000,
-    consistency_pct: 30, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 6,
+    consistency_pct: 30, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 4,
   },
   'lucid-50k-flex-eval': {
     label: 'Lucid 50K — Flex Eval (verify stop rule)',
