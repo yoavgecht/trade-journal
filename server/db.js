@@ -110,6 +110,13 @@ CREATE TABLE IF NOT EXISTS manual_days (
   PRIMARY KEY (journal_id, date)
 );
 
+CREATE TABLE IF NOT EXISTS day_logs (
+  journal_id INTEGER NOT NULL REFERENCES journals(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,       -- YYYY-MM-DD
+  note TEXT,
+  PRIMARY KEY (journal_id, date)
+);
+
 CREATE TABLE IF NOT EXISTS products (
   symbol TEXT PRIMARY KEY,
   point_value REAL NOT NULL,

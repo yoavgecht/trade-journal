@@ -230,6 +230,46 @@ export function risk(journalId) {
   };
 }
 
+// Daily Journal: one row per trading day with the day's stats, an intraday
+// cumulative-P&L sparkline, and the free-text daily log note. Most-recent first.
+export function dailyJournal(journalId) {
+  const trades = db.prepare('SELECT * FROM trades WHERE journal_id = ? AND exit_time IS NOT NULL ORDER BY exit_time').all(journalId);
+  const manual = db.prepare('SELECT date, pnl, trades, note FROM manual_days WHERE journal_id = ?').all(journalId);
+  const logs = Object.fromEntries(db.prepare('SELECT date, note FROM day_logs WHERE journal_id = ?').all(journalId).map((r) => [r.date, r.note]));
+
+  const byDay = {};
+  for (const t of trades) (byDay[(t.exit_time || '').slice(0, 10)] ??= []).push(t);
+  for (const m of manual) (byDay[m.date] ??= []); // ensure manual-only days appear
+
+  const out = Object.keys(byDay).sort((a, b) => b.localeCompare(a)).map((date) => {
+    const list = byDay[date].sort((a, b) => (a.exit_time || '').localeCompare(b.exit_time || ''));
+    const wins = list.filter((t) => t.pnl > 0), losses = list.filter((t) => t.pnl < 0);
+    const grossWin = wins.reduce((s, t) => s + t.pnl, 0);
+    const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+    const fees = list.reduce((s, t) => s + (t.fees || 0), 0);
+    const net = list.reduce((s, t) => s + t.pnl, 0);
+    const m = manual.find((x) => x.date === date);
+    let cum = 0;
+    const points = list.map((t, i) => { cum += t.pnl; return { i: i + 1, cum: r2(cum) }; });
+    return {
+      date,
+      net: r2(net + (m ? m.pnl : 0)),
+      trades: list.length + (m && !list.length ? (m.trades || 0) : 0),
+      winners: wins.length,
+      losers: losses.length,
+      winRate: list.length ? r2((wins.length / list.length) * 100) : null,
+      gross: r2(net + fees),
+      fees: r2(fees),
+      volume: list.reduce((s, t) => s + (t.qty || 0), 0),
+      profitFactor: grossLoss > 0 ? r2(grossWin / grossLoss) : (grossWin > 0 ? null : 0),
+      manual: m ? r2(m.pnl) : null,
+      note: logs[date] || '',
+      points,
+    };
+  });
+  return out;
+}
+
 // Cross-account portfolio overview — one compact summary row per journal for
 // the all-accounts screen.
 export function overviewAll() {

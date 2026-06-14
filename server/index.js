@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getJournal, productMap } from './db.js';
 import { importCsv } from './importer.js';
-import { summary, equity, patterns, risk, dashboard, challenge, insights, overviewAll } from './stats.js';
+import { summary, equity, patterns, risk, dashboard, challenge, insights, overviewAll, dailyJournal } from './stats.js';
 
 const app = express();
 app.use(express.json());
@@ -110,6 +110,17 @@ app.get('/api/dashboard', (req, res) => { const id = journalId(req, res); if (id
 app.get('/api/equity', (req, res) => { const id = journalId(req, res); if (id) res.json(equity(id)); });
 app.get('/api/patterns', (req, res) => { const id = journalId(req, res); if (id) res.json(patterns(id)); });
 app.get('/api/insights', (req, res) => { const id = journalId(req, res); if (id) res.json(insights(id)); });
+app.get('/api/journal', (req, res) => { const id = journalId(req, res); if (id) res.json(dailyJournal(id)); });
+
+// Daily log note (free-text per day).
+app.put('/api/day-log/:date', (req, res) => {
+  const id = journalId(req, res);
+  if (!id) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(req.params.date)) return res.status(400).json({ error: 'bad date' });
+  db.prepare(`INSERT INTO day_logs (journal_id, date, note) VALUES (?, ?, ?)
+    ON CONFLICT(journal_id, date) DO UPDATE SET note = excluded.note`).run(id, req.params.date, req.body?.note ?? '');
+  res.json({ ok: true });
+});
 app.get('/api/risk', (req, res) => { const id = journalId(req, res); if (id) res.json(risk(id)); });
 app.get('/api/challenge', (req, res) => { const id = journalId(req, res); if (id) res.json(challenge(id)); });
 

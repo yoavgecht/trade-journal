@@ -3,6 +3,7 @@ import { Routes, Route, NavLink, useNavigate } from 'react-router-dom';
 import Overview from './pages/Overview.jsx';
 import Portfolio from './pages/Portfolio.jsx';
 import Challenge from './pages/Challenge.jsx';
+import Journal from './pages/Journal.jsx';
 import Analytics from './pages/Analytics.jsx';
 import Patterns from './pages/Patterns.jsx';
 import Trades from './pages/Trades.jsx';
@@ -246,6 +247,7 @@ export default function App() {
           <NavLink className="nav-link" to="/accounts">Accounts</NavLink>
           <NavLink className="nav-link" to="/" end>Home</NavLink>
           <NavLink className="nav-link" to="/challenge">Challenge</NavLink>
+          <NavLink className="nav-link" to="/journal">Daily Journal</NavLink>
           <NavLink className="nav-link" to="/analytics">Analytics</NavLink>
           <NavLink className="nav-link" to="/patterns">Patterns</NavLink>
           <NavLink className="nav-link" to="/trades">Trades</NavLink>
@@ -261,6 +263,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Overview dataVersion={dataVersion} journal={active} onOpenImport={() => setShowImport(true)} />} />
             <Route path="/challenge" element={<Challenge dataVersion={dataVersion} journal={active} />} />
+            <Route path="/journal" element={<Journal dataVersion={dataVersion} />} />
             <Route path="/analytics" element={<Analytics dataVersion={dataVersion} journal={active} />} />
             <Route path="/patterns" element={<Patterns dataVersion={dataVersion} />} />
             <Route path="/accounts" element={<Portfolio dataVersion={dataVersion}
