@@ -37,10 +37,10 @@ app.post('/api/journals', (req, res) => {
   const r = db.prepare(`INSERT INTO journals
     (name, start_balance, trailing_dd, daily_loss_limit, dd_stops_at_start, deposit_date,
      firm, phase, profit_target, consistency_pct, consistency_cushion_pct, min_profit_days, min_profit_day_amount, max_contracts,
-     min_payout, payout_cap, max_payouts, default_risk)
+     min_payout, payout_cap, max_payouts, default_risk, dd_stop_mode, dd_buffer)
     VALUES (@name, @start_balance, @trailing_dd, @daily_loss_limit, @dd_stops_at_start, @deposit_date,
      @firm, @phase, @profit_target, @consistency_pct, @consistency_cushion_pct, @min_profit_days, @min_profit_day_amount, @max_contracts,
-     @min_payout, @payout_cap, @max_payouts, @default_risk)`).run({
+     @min_payout, @payout_cap, @max_payouts, @default_risk, @dd_stop_mode, @dd_buffer)`).run({
     name: String(b.name).trim(),
     start_balance: Number(b.start_balance ?? 50000),
     trailing_dd: Number(b.trailing_dd ?? 2500),
@@ -59,6 +59,8 @@ app.post('/api/journals', (req, res) => {
     payout_cap: Number(b.payout_cap ?? 0),
     max_payouts: Number(b.max_payouts ?? 0),
     default_risk: Number(b.default_risk ?? 0),
+    dd_stop_mode: b.dd_stop_mode ?? 'never',
+    dd_buffer: Number(b.dd_buffer ?? 100),
   });
   res.json(getJournal(r.lastInsertRowid));
 });
@@ -68,7 +70,8 @@ app.patch('/api/journals/:id', (req, res) => {
   if (!j) return res.status(404).json({ error: 'no such journal' });
   const allowed = ['name', 'start_balance', 'trailing_dd', 'daily_loss_limit', 'dd_stops_at_start',
     'deposit_date', 'firm', 'phase', 'profit_target', 'consistency_pct', 'consistency_cushion_pct',
-    'min_profit_days', 'min_profit_day_amount', 'max_contracts', 'min_payout', 'payout_cap', 'max_payouts', 'default_risk'];
+    'min_profit_days', 'min_profit_day_amount', 'max_contracts', 'min_payout', 'payout_cap', 'max_payouts', 'default_risk',
+    'dd_stop_mode', 'dd_buffer'];
   for (const k of allowed) {
     if (k in (req.body || {})) {
       db.prepare(`UPDATE journals SET ${k} = ? WHERE id = ?`).run(req.body[k], j.id);

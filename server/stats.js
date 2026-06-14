@@ -166,37 +166,65 @@ function mistakeBreakdown(journalId) {
   return Object.values(tags).map((t) => ({ ...t, pnl: r2(t.pnl) })).sort((a, b) => a.pnl - b.pnl);
 }
 
-// Apex-style EOD trailing drawdown simulation over the imported history.
+// Apex EOD trailing drawdown simulation over the imported history.
+//
+// Rules (apextraderfunding.com): the threshold is the lowest balance allowed.
+// It's recalculated at each EOD close, trails the HIGHEST EOD balance, and
+// NEVER moves down. The instant balance touches it → liquidation (eval failed /
+// PA closed). So the threshold is a HARD FLOOR: you can never lose past it, and
+// once hit the account is dead. Where it stops climbing depends on account type:
+//   never  → trails the peak EOD balance forever (Tradovate evals)
+//   buffer → locks at start + dd_buffer  (PA / funded; Apex = $100)
+//   target → locks at start + profit_target (Rithmic/WealthCharts evals)
 export function risk(journalId) {
   const j = getJournal(journalId) || {};
   const start = j.start_balance || 0;
   const dd = j.trailing_dd || 0;
-  const stopsAtStart = !!j.dd_stops_at_start;
+  const mode = j.dd_stop_mode || 'never';
+  const buffer = j.dd_buffer ?? 100;
+  const target = j.profit_target || 0;
+  const lockLevel = mode === 'buffer' ? start + buffer
+    : mode === 'target' ? start + target
+    : Infinity; // 'never'
 
   const days = equity(journalId); // ordered daily closes
-  let balance = start;
-  let threshold = start - dd;
-  let minDistance = dd, breachedOn = null;
+  let peakEOD = start;
+  let threshold = start - dd;     // threshold in force for the NEXT session
+  let minDistance = dd, breachedOn = null, balance = start;
   const series = [];
   for (const d of days) {
-    // Intraday breach is approximated at day granularity (fills-level equity
-    // would need tick data); EOD trailing updates AFTER the day closes.
-    balance = start + d.cum;
-    if (balance <= threshold && !breachedOn) breachedOn = d.date;
-    series.push({ date: d.date, balance: r2(balance), threshold: r2(threshold) });
-    if (balance - dd > threshold) {
-      threshold = balance - dd;
-      if (stopsAtStart && threshold > start) threshold = start;
+    if (breachedOn) {
+      // Account is already gone — real trading stopped here; freeze the floor.
+      series.push({ date: d.date, balance: r2(threshold), threshold: r2(threshold), dead: true });
+      continue;
     }
+    balance = start + d.cum;
+    // Breach is enforced in real time against the threshold set at the prior
+    // close. At day granularity we check the EOD balance. Touch/cross = dead,
+    // and the loss is capped at the threshold (can't go below it).
+    if (balance <= threshold) {
+      breachedOn = d.date;
+      balance = threshold;
+      minDistance = 0;
+      series.push({ date: d.date, balance: r2(threshold), threshold: r2(threshold), dead: true });
+      continue;
+    }
+    series.push({ date: d.date, balance: r2(balance), threshold: r2(threshold) });
     minDistance = Math.min(minDistance, balance - threshold);
+    // EOD recalculation for the next session: trails the peak EOD high up only,
+    // capped at the lock level.
+    peakEOD = Math.max(peakEOD, balance);
+    threshold = Math.max(threshold, Math.min(peakEOD - dd, lockLevel));
   }
   return {
     startBalance: start,
     trailingDd: dd,
+    stopMode: mode,
+    lockLevel: lockLevel === Infinity ? null : r2(lockLevel),
     currentBalance: r2(balance),
     currentThreshold: r2(threshold),
-    distance: r2(balance - threshold),
-    minDistance: r2(minDistance),
+    distance: breachedOn ? 0 : r2(balance - threshold),
+    minDistance: r2(Math.max(0, minDistance)),
     breachedOn,
     series,
   };

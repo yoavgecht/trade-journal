@@ -104,11 +104,22 @@ function CreateJournalModal({ onCreated, onClose, blocking }) {
             <input type="number" value={r.max_contracts} onChange={(e) => set('max_contracts', Number(e.target.value))} />
           </div>
         </div>
-        <label className="muted" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-          <input type="checkbox" checked={!!r.dd_stops_at_start}
-            onChange={(e) => set('dd_stops_at_start', e.target.checked)} />
-          {' '}Drawdown stops trailing at starting balance (Apex/Lucid PA style)
-        </label>
+        <div className="field-row">
+          <div className="field">
+            <label>EOD drawdown stops trailing</label>
+            <select value={r.dd_stop_mode || 'never'} onChange={(e) => set('dd_stop_mode', e.target.value)}>
+              <option value="never">Never — trails peak forever (Tradovate eval)</option>
+              <option value="buffer">At start + buffer (PA / funded)</option>
+              <option value="target">At start + profit target (Rithmic/WC eval)</option>
+            </select>
+          </div>
+          {r.dd_stop_mode === 'buffer' && (
+            <div className="field">
+              <label>Buffer ($)</label>
+              <input type="number" value={r.dd_buffer ?? 100} onChange={(e) => set('dd_buffer', Number(e.target.value))} />
+            </div>
+          )}
+        </div>
         <div className="infobox">Presets are a starting point — verify against your firm's current rules.</div>
 
         <div className="row" style={{ marginTop: 8 }}>

@@ -27,7 +27,13 @@ CREATE TABLE IF NOT EXISTS journals (
   name TEXT NOT NULL,
   start_balance REAL NOT NULL DEFAULT 50000,
   trailing_dd REAL NOT NULL DEFAULT 2500,
-  dd_stops_at_start INTEGER NOT NULL DEFAULT 1,
+  dd_stops_at_start INTEGER NOT NULL DEFAULT 1, -- legacy; superseded by dd_stop_mode
+  -- How the EOD trailing threshold stops climbing (Apex rules):
+  --   'never'  → trails the peak EOD balance forever (Tradovate evals)
+  --   'buffer' → locks at start + dd_buffer  (PA / funded; Apex = $100)
+  --   'target' → locks at start + profit_target (Rithmic/WealthCharts evals)
+  dd_stop_mode TEXT NOT NULL DEFAULT 'never',
+  dd_buffer REAL NOT NULL DEFAULT 100,
   daily_loss_limit REAL NOT NULL DEFAULT 1000,
   deposit_date TEXT,
   -- Challenge / payout rules (Apex / Lucid / MFFU evals + funded):
@@ -138,6 +144,8 @@ for (const [col, ddl] of [
   ['payout_cap', 'payout_cap REAL NOT NULL DEFAULT 0'],
   ['max_payouts', 'max_payouts INTEGER NOT NULL DEFAULT 0'],
   ['default_risk', 'default_risk REAL NOT NULL DEFAULT 0'], // $ risked/trade when no per-trade stop set
+  ['dd_stop_mode', "dd_stop_mode TEXT NOT NULL DEFAULT 'never'"],
+  ['dd_buffer', 'dd_buffer REAL NOT NULL DEFAULT 100'],
 ]) {
   if (jCols.length && !jCols.includes(col)) db.exec(`ALTER TABLE journals ADD COLUMN ${ddl}`);
 }

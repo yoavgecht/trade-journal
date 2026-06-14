@@ -57,8 +57,12 @@ export default function Risk({ dataVersion }) {
           </ResponsiveContainer>
         )}
         <div className="muted" style={{ marginTop: 8 }}>
-          Day-granularity simulation from imported trades (intraday swings between fills aren't visible to the journal).
-          The threshold trails end-of-day highs and {'stops at the starting balance (Apex-style)'}.
+          The threshold trails end-of-day highs upward only, and is a HARD FLOOR — touching it liquidates the account
+          (so you can never lose past it). Stop rule: {
+            r.stopMode === 'never' ? 'trails the peak EOD balance forever (Tradovate eval)'
+            : r.stopMode === 'target' ? `locks at start + target${r.lockLevel ? ` = ${money(r.lockLevel)}` : ''} (Rithmic/WealthCharts eval)`
+            : `locks at start + buffer${r.lockLevel ? ` = ${money(r.lockLevel)}` : ''} (PA / funded)`
+          }. Day-granularity from imported + manual days (intraday swings between fills aren't visible).
         </div>
       </div>
     </>

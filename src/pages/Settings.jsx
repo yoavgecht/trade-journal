@@ -39,7 +39,8 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
         payout_cap: Number(form.payout_cap || 0),
         max_payouts: Number(form.max_payouts || 0),
         default_risk: Number(form.default_risk || 0),
-        dd_stops_at_start: form.dd_stops_at_start ? 1 : 0,
+        dd_stop_mode: form.dd_stop_mode || 'never',
+        dd_buffer: Number(form.dd_buffer ?? 100),
       },
     });
     await api('/products', { method: 'PATCH', body: products });
@@ -149,11 +150,21 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
           </div>
           <div className="field" />
         </div>
-        <label className="muted" style={{ fontSize: 13 }}>
-          <input type="checkbox" checked={!!form.dd_stops_at_start}
-            onChange={(e) => set('dd_stops_at_start', e.target.checked)} />
-          {' '}Threshold stops trailing at starting balance (Apex/Lucid PA style)
-        </label>
+        <div className="field-row" style={{ maxWidth: 720 }}>
+          <div className="field">
+            <label>EOD drawdown stops trailing</label>
+            <select value={form.dd_stop_mode || 'never'} onChange={(e) => set('dd_stop_mode', e.target.value)}>
+              <option value="never">Never — trails peak forever (Tradovate eval)</option>
+              <option value="buffer">At start + buffer (PA / funded)</option>
+              <option value="target">At start + profit target (Rithmic/WC eval)</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Buffer ($, for "start + buffer")</label>
+            <input type="number" value={form.dd_buffer ?? 100} onChange={(e) => set('dd_buffer', e.target.value)} />
+          </div>
+          <div className="field" />
+        </div>
       </div>
 
       <div className="panel" style={{ marginBottom: 14 }}>
