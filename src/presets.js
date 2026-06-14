@@ -7,26 +7,28 @@
 //   'buffer' → locks at start + dd_buffer (PA/funded; Apex = $100)
 //   'target' → locks at start + profit_target (Apex Rithmic/WealthCharts evals)
 export const PRESETS = {
+  // EOD Evaluation params (50K): target $3,000 · EOD drawdown $2,000 · DLL
+  // $1,000 · 6 contracts · 30-day access · no consistency, no min days.
   'apex-50k-eval': {
     label: 'Apex 50K — EOD Eval (Tradovate)',
     firm: 'Apex', phase: 'eval',
     start_balance: 50000, profit_target: 3000, trailing_dd: 2000,
-    dd_stop_mode: 'never', dd_buffer: 100, daily_loss_limit: 0,
-    consistency_pct: 0, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 10,
+    dd_stop_mode: 'never', dd_buffer: 100, daily_loss_limit: 1000,
+    consistency_pct: 0, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 6,
   },
   'apex-50k-eval-rithmic': {
     label: 'Apex 50K — EOD Eval (Rithmic/WealthCharts)',
     firm: 'Apex', phase: 'eval',
     start_balance: 50000, profit_target: 3000, trailing_dd: 2000,
-    dd_stop_mode: 'target', dd_buffer: 100, daily_loss_limit: 0,
-    consistency_pct: 0, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 10,
+    dd_stop_mode: 'target', dd_buffer: 100, daily_loss_limit: 1000,
+    consistency_pct: 0, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 6,
   },
   'apex-50k-pa': {
-    label: 'Apex 50K — PA / Funded',
+    label: 'Apex 50K — EOD PA / Funded',
     firm: 'Apex', phase: 'funded',
     start_balance: 50000, profit_target: 0, trailing_dd: 2000,
-    dd_stop_mode: 'buffer', dd_buffer: 100, daily_loss_limit: 0,
-    consistency_pct: 30, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 10,
+    dd_stop_mode: 'buffer', dd_buffer: 100, daily_loss_limit: 1000,
+    consistency_pct: 30, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 6,
   },
   'lucid-50k-flex-eval': {
     label: 'Lucid 50K — Flex Eval (verify stop rule)',
