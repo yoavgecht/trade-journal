@@ -7,7 +7,7 @@ const STATUS = {
   failed: { label: 'BLOWN', color: 'var(--red)' },
 };
 
-function AccountCard({ a, onOpen }) {
+function AccountCard({ a, onOpen, onDelete }) {
   const s = STATUS[a.status] || STATUS.progress;
   return (
     <div className="acct-card" onClick={() => onOpen(a.id)}>
@@ -15,6 +15,8 @@ function AccountCard({ a, onOpen }) {
         <b style={{ fontSize: 14 }}>{a.name}</b>
         <div className="spacer" />
         <span style={{ fontWeight: 800, fontSize: 11, color: s.color }}>{s.label}</span>
+        <button className="acct-del" title="Delete account"
+          onClick={(e) => { e.stopPropagation(); onDelete(a); }}>🗑</button>
       </div>
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
         <div>
@@ -48,7 +50,7 @@ function AccountCard({ a, onOpen }) {
   );
 }
 
-export default function Portfolio({ dataVersion, onOpen, onAdd, filter }) {
+export default function Portfolio({ dataVersion, onOpen, onAdd, onDelete, filter }) {
   const [rows, setRows] = useState(null);
   useEffect(() => { api('/overview').then(setRows); }, [dataVersion]);
   if (!rows) return null;
@@ -74,7 +76,7 @@ export default function Portfolio({ dataVersion, onOpen, onAdd, filter }) {
         <div className="panel muted">No {isFunded ? 'funded accounts' : 'challenges'} yet — click “New” to add one.</div>
       ) : (
         <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
-          {list.map((a) => <AccountCard key={a.id} a={a} onOpen={onOpen} />)}
+          {list.map((a) => <AccountCard key={a.id} a={a} onOpen={onOpen} onDelete={onDelete} />)}
         </div>
       )}
     </>

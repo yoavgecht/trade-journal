@@ -200,6 +200,19 @@ export default function App() {
     });
   }, []);
 
+  // Delete an account (with its data); reassign active if it was the open one.
+  const removeJournal = async (a) => {
+    if (!confirm(`Delete "${a.name}" and all its trades, notes and payouts? This can't be undone.`)) return;
+    await api(`/journals/${a.id}`, { method: 'DELETE' });
+    const js = await api('/journals');
+    setJournals(js);
+    if (a.id === activeId) {
+      if (js[0]) selectJournal(js[0].id); else { setActiveId(null); setActiveJournalId(null); }
+    } else {
+      setDataVersion((v) => v + 1);
+    }
+  };
+
   const selectJournal = (id) => {
     setActiveId(id);
     setActiveJournalId(id);
@@ -252,9 +265,9 @@ export default function App() {
             <Route path="/" element={<Overview dataVersion={dataVersion} journal={active} onOpenImport={() => setShowImport(true)} />} />
             <Route path="/journal" element={<Journal dataVersion={dataVersion} />} />
             <Route path="/challenges" element={<Portfolio dataVersion={dataVersion} filter="eval"
-              onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} />} />
+              onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} onDelete={removeJournal} />} />
             <Route path="/funded" element={<Portfolio dataVersion={dataVersion} filter="funded"
-              onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} />} />
+              onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} onDelete={removeJournal} />} />
             <Route path="/analytics" element={<Analytics dataVersion={dataVersion} journal={active} />} />
             <Route path="/patterns" element={<Patterns dataVersion={dataVersion} />} />
             <Route path="/trades" element={<Trades dataVersion={dataVersion} />} />
