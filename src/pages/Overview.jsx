@@ -5,14 +5,21 @@ import {
   Tooltip, CartesianGrid, ReferenceLine, Cell,
 } from 'recharts';
 import { api, money, fmt } from '../api.js';
+import { fundedRulesFor } from '../presets.js';
+import PassFundedModal from '../components/PassFundedModal.jsx';
+import PayoutModal from '../components/PayoutModal.jsx';
+import BrokerCredentials from '../components/BrokerCredentials.jsx';
+import TradeReports from '../components/TradeReports.jsx';
 import DayPanel from '../components/DayPanel.jsx';
-import Challenge from './Challenge.jsx';
+import DashboardStats from './DashboardStats.jsx';
+import AccountData from './AccountData.jsx';
+import ClosedTrades from './ClosedTrades.jsx';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December'];
 
-const tooltipStyle = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8 };
+const tooltipStyle = { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8 };
 
 // ---- small SVG widgets -----------------------------------------------------
 
@@ -43,7 +50,7 @@ function Donut({ value, color, size = 64, stroke = 9, children }) {
   return (
     <div style={{ position: 'relative', width: size, height: size }}>
       <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={stroke}
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(128,128,128,0.18)" strokeWidth={stroke}
           strokeDasharray={`${seg * 0.62} ${seg * 0.38}`} />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke}
           strokeDasharray={`${seg * 0.62} ${seg * 0.38}`} />
@@ -71,16 +78,23 @@ function SplitBar({ win, loss }) {
 }
 
 function Sparkline({ data }) {
+  // Need ≥2 points to draw a line — a single trading day would render as a lone
+  // dot, so prepend a 0 baseline (start → cum). Color by direction (up/down).
+  const series = (data || []).length === 1 ? [{ cum: 0 }, data[0]] : (data || []);
+  if (series.length < 2) return <div style={{ height: 36 }} />;
+  const up = series[series.length - 1].cum >= 0;
+  const color = up ? '#16a34a' : '#dc2626';
+  const gid = up ? 'spark-up' : 'spark-down';
   return (
     <ResponsiveContainer width="100%" height={36}>
-      <AreaChart data={data} margin={{ top: 2, bottom: 0, left: 0, right: 0 }}>
+      <AreaChart data={series} margin={{ top: 2, bottom: 0, left: 0, right: 0 }}>
         <defs>
-          <linearGradient id="spark" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#16a34a" stopOpacity={0.35} />
-            <stop offset="100%" stopColor="#16a34a" stopOpacity={0} />
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+            <stop offset="100%" stopColor={color} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <Area type="monotone" dataKey="cum" stroke="#16a34a" strokeWidth={2} fill="url(#spark)" dot={false} isAnimationActive={false} />
+        <Area type="monotone" dataKey="cum" stroke={color} strokeWidth={2} fill={`url(#${gid})`} dot={false} isAnimationActive={false} />
       </AreaChart>
     </ResponsiveContainer>
   );
@@ -100,14 +114,19 @@ function GrowthBlock({ label, value, sub, signed }) {
 
 // ---- profit calendar -------------------------------------------------------
 
-function ProfitCalendar({ equity, conv, onDayClick }) {
+function ProfitCalendar({ equity, payouts, funded, conv, onDayClick }) {
   const byDate = useMemo(() => Object.fromEntries(equity.map((d) => [d.date, d])), [equity]);
+  const payoutByDate = useMemo(() => {
+    const m = {};
+    for (const p of (payouts || [])) m[p.date] = (m[p.date] || 0) + p.amount;
+    return m;
+  }, [payouts]);
   const latest = equity.length ? equity[equity.length - 1].date : new Date().toISOString().slice(0, 10);
   const [ym, setYm] = useState(() => latest.slice(0, 7)); // "YYYY-MM"
 
   const [year, month] = ym.split('-').map(Number);
   const first = new Date(year, month - 1, 1);
-  const startOffset = (first.getDay() + 6) % 7; // Monday-first
+  const startOffset = first.getDay(); // Sunday-first (MFFU-style; 0 = Sunday)
   const gridStart = new Date(year, month - 1, 1 - startOffset);
   const cells = [];
   for (let i = 0; i < 42; i++) {
@@ -135,32 +154,46 @@ function ProfitCalendar({ equity, conv, onDayClick }) {
         <button className="cal-nav" onClick={() => nav(1)}>›</button>
       </div>
       <div className="cal-grid">
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => <div key={d} className="cal-dow">{d}</div>)}
+        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="cal-dow">{d}</div>)}
         {cells.map((d, i) => {
           const data = byDate[key(d)];
+          const payout = payoutByDate[key(d)];
           const out = d.getMonth() !== month - 1;
-          const today = key(d) === new Date().toISOString().slice(0, 10);
+          const today = key(d) === key(new Date()); // local date, not UTC
           const cls = data ? (data.pnl >= 0 ? 'green' : 'red') : '';
-          const clickable = !out; // any in-month day: review trades or type in a manual P&L
+          // A trading day (or a payout day) is always shown + clickable, even when
+          // it spills into an adjacent-month cell (e.g. Jun 30 in the July grid) —
+          // otherwise days that straddle a month boundary silently disappear.
+          const clickable = !out || !!data || payout != null;
+          const faded = out && !data && payout == null; // only fade EMPTY out-of-month spacers
           return (
-            <div key={i} className={`cal-cell ${cls} ${out ? 'out' : ''} ${today ? 'today' : ''} ${clickable ? 'clickable' : ''}`}
+            <div key={i} className={`cal-cell ${cls} ${faded ? 'out' : ''} ${today ? 'today' : ''} ${clickable ? 'clickable' : ''}`}
               onClick={clickable ? () => onDayClick(key(d)) : undefined}
               title={clickable ? 'Open day review' : undefined}>
-              <div className="cal-day">{d.getDate()}</div>
-              {data && !out && (
-                <div style={{ textAlign: 'center' }}>
-                  <div className={`cal-pnl ${data.pnl >= 0 ? 'pos' : 'neg'}`}>{conv(data.pnl)}</div>
-                  <div className="cal-trades">{data.trades} trade{data.trades !== 1 ? 's' : ''}</div>
-                  <div className="cal-bar" style={{
-                    width: `${Math.max(12, (Math.abs(data.pnl) / maxAbs) * 100)}%`,
-                    margin: '4px auto 0',
-                    background: data.pnl >= 0 ? 'var(--green)' : 'var(--red)',
-                  }} />
-                </div>
-              )}
+              <div className="cal-day">{today && <span className="cal-today-dot" />}{d.getDate()}</div>
+              <div style={{ textAlign: 'center' }}>
+                {payout != null && <div className="cal-payout">↓ {money(payout)} Payout</div>}
+                {data && (
+                  <>
+                    <div className={`cal-pnl ${data.pnl >= 0 ? 'pos' : 'neg'}`}>{conv(data.pnl)}</div>
+                    <div className="cal-trades">{data.trades} trade{data.trades !== 1 ? 's' : ''}</div>
+                    <div className="cal-bar" style={{
+                      width: `${Math.max(12, (Math.abs(data.pnl) / maxAbs) * 100)}%`,
+                      margin: '4px auto 0',
+                      background: data.pnl >= 0 ? 'var(--green)' : 'var(--red)',
+                    }} />
+                  </>
+                )}
+              </div>
             </div>
           );
         })}
+      </div>
+      <div className="cal-legend">
+        <span><i className="dot" style={{ background: 'var(--green)' }} /> Profit</span>
+        <span><i className="dot" style={{ background: 'var(--red)' }} /> Loss</span>
+        {funded && <span><i className="dot" style={{ background: 'var(--accent)' }} /> Payout</span>}
+        <span><i className="dot" style={{ background: '#f59e0b' }} /> Today</span>
       </div>
     </div>
   );
@@ -168,21 +201,47 @@ function ProfitCalendar({ equity, conv, onDayClick }) {
 
 // ---- page ------------------------------------------------------------------
 
-export default function Overview({ dataVersion, journal, onOpenImport }) {
+export default function Overview({ dataVersion, journal, onOpenImport, onDataChanged, onJournalPatched }) {
   const [d, setD] = useState(null);
   const [risk, setRisk] = useState(null);
+  const [chal, setChal] = useState(null);
   const [unit, setUnit] = useState('usd');
   const [reviewDay, setReviewDay] = useState(null);
   const [localV, setLocalV] = useState(0); // bumped by DayPanel edits
+  const [passOpen, setPassOpen] = useState(false);
+  const [payoutOpen, setPayoutOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifSeen, setNotifSeen] = useState(false); // hide the badge after the first open
   const navigate = useNavigate();
 
   useEffect(() => {
     api('/dashboard').then(setD);
     api('/risk').then(setRisk);
-  }, [dataVersion, localV]);
+    api('/challenge').then(setChal).catch(() => setChal(null));
+  }, [dataVersion, localV, journal.id]);
+
+  // Pass / Blown — enable on target (evals only) / trailing-stop breach.
+  // Archiving keeps all data; a pass also spins up a matching funded account.
+  const isEval = chal && (chal.phase || journal.phase) !== 'funded';
+  const canPass = !!(isEval && chal.status === 'passed');
+  const canBlow = !!(chal && chal.status === 'failed');
+  const archive = async (outcome, fundedName = null) => {
+    let fundedRules = null;
+    if (outcome === 'passed') {
+      fundedRules = fundedRulesFor(journal.firm, journal.start_balance);
+    } else if (!window.confirm(`Archive "${journal.name}" as BLOWN?\n\nAll its data (P&L, trades, chart) is kept for your records.`)) {
+      return;
+    }
+    const r = await api(`/journals/${journal.id}/archive`, { method: 'POST', body: { outcome, fundedName, fundedRules } });
+    if (r?.funded) localStorage.setItem('pendingActive', String(r.funded.id));
+    if (outcome === 'passed') {
+      window.location.assign('/');
+    } else {
+      window.location.assign('/archive');
+    }
+  };
 
   if (!d) return null;
-  const empty = d.trades === 0 && d.equity.length === 0;
   const ratio = d.avgLoss !== 0 ? Math.abs(d.avgWin / d.avgLoss) : null;
   const pfFill = d.profitFactor == null ? 0 : Math.min(8, Math.round(d.profitFactor * 2.5));
   const scoreColor = d.score >= 75 ? 'var(--green)' : d.score >= 45 ? '#f59e0b' : 'var(--red)';
@@ -202,35 +261,63 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
   return (
     <>
       <div className="row" style={{ marginBottom: 4 }}>
-        <h1 style={{ margin: 0 }}>{journal.name}</h1>
-        <span className="market-chip" style={{ fontSize: 11 }}>{journal.phase === 'funded' ? 'Funded (PA)' : 'Challenge'}</span>
+        <h1 style={{ margin: 0 }}>{journal.phase === 'funded' ? `Funded — ${journal.name}` : journal.name}</h1>
+        {journal.phase !== 'funded' && <span className="market-chip" style={{ fontSize: 11 }}>Challenge</span>}
         {journal.last_import_at && <span className="muted" style={{ fontSize: 12 }}>· last import {new Date(journal.last_import_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
       </div>
       <div className="row" style={{ marginBottom: 14 }}>
-        <div className="unit-tabs">
-          <button className={`unit-tab ${unit === 'usd' ? 'on' : ''}`} onClick={() => setUnit('usd')}>United States Dollar (USD)</button>
-          <button className={`unit-tab ${unit === 'pct' ? 'on' : ''}`} onClick={() => setUnit('pct')}>Return (%)</button>
-          <button className="unit-tab" disabled title="Needs per-trade stop-loss data — planned">R Multiple</button>
-        </div>
         <div className="spacer" />
+        {chal && (
+          <>
+            <button className="link-btn" style={{ fontSize: 12 }} onClick={() => navigate('/challenge')}>Rules &amp; payouts ›</button>
+            {isEval && (
+              <button onClick={() => canPass && setPassOpen(true)} disabled={!canPass} className="ghost"
+                style={{ borderColor: canPass ? 'var(--green)' : undefined, color: canPass ? 'var(--green)' : 'var(--muted)', fontWeight: 700 }}
+                title={canPass ? 'Archive as PASSED and open a matching funded account' : `Reach the ${money(chal.target)} target to enable`}>
+                ✓ Passed
+              </button>
+            )}
+            {!isEval && chal.payout && (
+              <button onClick={() => chal.payout.eligible && setPayoutOpen(true)} disabled={!chal.payout.eligible} className="ghost"
+                style={{ borderColor: chal.payout.eligible ? 'var(--accent)' : undefined, color: chal.payout.eligible ? 'var(--accent)' : 'var(--muted)', fontWeight: 700 }}
+                title={chal.payout.eligible ? 'Record a payout' : 'Meet the payout requirements (5 winning days, consistency, positive cycle) to enable'}>
+                💸 Take Payout
+              </button>
+            )}
+            <button onClick={() => archive('blown')} className="ghost"
+              style={{ borderColor: 'var(--red)', color: 'var(--red)', cursor: 'pointer', fontWeight: 700 }}
+              title="Archive as BLOWN">
+              ✕ Blown
+            </button>
+          </>
+        )}
         {d.issues.length > 0 && (
-          <div className="banner" onClick={() => navigate('/patterns')}
-            title={d.issues.join('\n')}>
-            ✦ Edge check found <b>{d.issues.length} insight{d.issues.length > 1 ? 's' : ''}</b> in your journal <span className="muted">›</span>
+          <div className="notif-wrap">
+            <button className="bell-btn" onClick={() => { setNotifOpen((o) => !o); setNotifSeen(true); }} title="Edge check insights">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" />
+              </svg>
+              {!notifSeen && <span className="bell-badge">{d.issues.length}</span>}
+            </button>
+            {notifOpen && (
+              <>
+                <div className="notif-backdrop" onClick={() => setNotifOpen(false)} />
+                <div className="notif-pop">
+                  <div className="notif-head">Edge check · {d.issues.length} insight{d.issues.length > 1 ? 's' : ''}</div>
+                  {d.issues.map((it, i) => <div key={i} className="notif-item">✦ {it}</div>)}
+                  <button className="notif-cta" onClick={() => { setNotifOpen(false); navigate('/patterns'); }}>View in Patterns ›</button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
 
-      {empty ? (
-        <div className="panel" style={{ textAlign: 'center', padding: 40 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>{journal.name} has no trades yet</div>
-          <div className="muted" style={{ marginBottom: 16 }}>
-            Export your trades from Tradovate (Reports → Fills) and import them here.
-          </div>
-          <button onClick={onOpenImport}>Import Trades</button>
-        </div>
-      ) : (
-        <>
+      <BrokerCredentials journal={journal} onImport={onOpenImport} onSaved={onJournalPatched} onChanged={onDataChanged} />
+
+      {/* Full dashboard always renders — a blank account just shows zeros + the
+          flat baseline chart (recharts renders empty data as nothing). */}
+      <>
           {/* Top stat cards */}
           <div className="grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: 14 }}>
             <div className="panel">
@@ -239,13 +326,13 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
               <Sparkline data={d.equity} />
             </div>
             <div className="panel" style={{ textAlign: 'center' }}>
-              <div className="stat-label" style={{ textAlign: 'left' }}>Winrate</div>
-              <Gauge pct={d.winRate} />
-              <div style={{ fontWeight: 700, marginTop: -4 }}>{fmt(d.winRate)}%</div>
-              <div style={{ fontSize: 12, display: 'flex', justifyContent: 'space-around', marginTop: 2 }}>
-                <span className="pos">{d.counts.wins}</span>
-                <span className="muted">{d.counts.be}</span>
-                <span className="neg">{d.counts.losses}</span>
+              <div className="stat-label" style={{ textAlign: 'left' }}>Winrate <span className="muted" style={{ fontWeight: 400 }}>(excl. break-even)</span></div>
+              <div style={{ margin: '10px 0 6px' }}><Gauge pct={d.winRateNoBe ?? d.winRate} /></div>
+              <div style={{ fontWeight: 700, marginTop: -4 }}>{fmt(d.winRateNoBe ?? d.winRate)}%</div>
+              <div style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', marginTop: 8, padding: '0 14px' }}>
+                <span className="pos" title="Wins (> $10)">{d.counts.wins} W</span>
+                <span className="muted" title="Break-even / scratch (±$10)">{d.counts.be} BE</span>
+                <span className="neg" title="Losses (< −$10)">{d.counts.losses} L</span>
               </div>
             </div>
             <div className="panel">
@@ -284,7 +371,22 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
             const equity = risk.currentBalance;
             const floor = risk.currentThreshold;
             const aboveFloor = risk.distance;            // equity − floor
+            const target = risk.targetBalance;           // pass level (start + profit target) — EVALS ONLY
+            // Funded (Apex PA): no target; instead the trailing DD LOCKS once balance
+            // hits start + dd + buffer (e.g. $52,100). That's the line worth showing.
+            const lockLine = journal.phase === 'funded' ? risk.lockAt : null;
+            // Clean round-$1k Y ticks so the reference lines land exactly on their labels.
+            const yVals = risk.series.flatMap((p) => [p.balance, p.threshold]);
+            if (target) yVals.push(target);
+            if (lockLine) yVals.push(lockLine);
+            const yMin = Math.floor(Math.min(...yVals) / 1000) * 1000;
+            const yMax = Math.ceil(Math.max(...yVals) / 1000) * 1000 + 1000; // headroom for the target label
+            const yTicks = [];
+            for (let v = yMin; v <= yMax; v += 1000) yTicks.push(v);
             const funded = journal.phase === 'funded';
+            // Funded (PA): the "buffer" is your starting capital — show profit ABOVE it,
+            // never negative (a fresh account has $0 profit, not the trailing-stop cushion).
+            const aboveBuffer = funded ? Math.max(0, equity - start) : aboveFloor;
             const pct = (n, base) => base ? `${n >= 0 ? '' : ''}${((n / base) * 100).toFixed(2)}%` : '—';
             return (
               <div className="panel" style={{ marginBottom: 14 }}>
@@ -295,23 +397,37 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
                       <AreaChart data={risk.series}>
                         <defs>
                           <linearGradient id="growfill" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#d4a017" stopOpacity={0.3} />
-                            <stop offset="100%" stopColor="#d4a017" stopOpacity={0} />
+                            <stop offset="0%" stopColor="#d4a017" stopOpacity={0.32} />
+                            <stop offset="100%" stopColor="#d4a017" stopOpacity={0.02} />
+                          </linearGradient>
+                          <linearGradient id="dangerfill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#dc2626" stopOpacity={0.28} />
+                            <stop offset="100%" stopColor="#dc2626" stopOpacity={0.03} />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+                        <CartesianGrid stroke="rgba(128,128,128,0.18)" strokeDasharray="3 3" />
                         <XAxis dataKey="date" stroke="#6b7280" fontSize={10} />
-                        <YAxis stroke="#6b7280" fontSize={11} domain={['auto', 'auto']} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} />
-                        <Tooltip contentStyle={tooltipStyle} formatter={(v) => money(v)} />
+                        <YAxis stroke="#6b7280" fontSize={11} domain={[yMin, yMax]} ticks={yTicks} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`} />
+                        <Tooltip contentStyle={tooltipStyle} cursor={false} formatter={(v) => money(v)} />
+                        {/* Gold balance area under, then the red "danger zone" under the trailing
+                            stop on top — so below the floor reads red, above it reads gold. */}
                         <Area type="monotone" dataKey="balance" name="Balance" stroke="#d4a017" strokeWidth={2.5} fill="url(#growfill)" dot={false} />
-                        <Area type="stepAfter" dataKey="threshold" name={funded ? 'Buffer' : 'Trailing stop'} stroke="#dc2626" strokeWidth={2} strokeDasharray="5 3" fill="none" dot={false} />
+                        <Area type="monotone" dataKey="threshold" name="Trailing stop" stroke="#dc2626" strokeWidth={2} strokeDasharray="5 3" fill="url(#dangerfill)" dot={false} />
+                        {target && (
+                          <ReferenceLine y={target} stroke="#16a34a" strokeDasharray="6 4" strokeWidth={1.5}
+                            label={{ value: `Target ${money(target)}`, position: 'insideTopRight', fill: '#16a34a', fontSize: 11, fontWeight: 700 }} />
+                        )}
+                        {lockLine && (
+                          <ReferenceLine y={lockLine} stroke="#16a34a" strokeDasharray="6 4" strokeWidth={1.5}
+                            label={{ value: `Trailing DD locks at ${money(lockLine)}`, position: 'insideTopRight', fill: '#16a34a', fontSize: 11, fontWeight: 700 }} />
+                        )}
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
                   <div style={{ width: 230, display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <GrowthBlock label="Net Profit / Loss" value={money(d.totalPnl)} sub={pct(d.totalPnl, start)} signed={d.totalPnl} />
                     <GrowthBlock label={funded ? 'Profit Above Buffer' : 'Profit Above Trailing Stop'}
-                      value={money(aboveFloor)} sub={pct(aboveFloor, equity)} signed={aboveFloor} />
+                      value={money(aboveBuffer)} sub={pct(aboveBuffer, funded ? start : equity)} signed={aboveBuffer} />
                     <GrowthBlock label="Current Equity" value={money(equity)} sub={pct(d.totalPnl, start)} />
                     <GrowthBlock label="Max Drawdown" value={money(floor)} sub={`-${pct(risk.trailingDd, start)}`} />
                   </div>
@@ -320,13 +436,25 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
             );
           })()}
 
-          {/* Pass / payout scoreboard (folded in from the old Scoreboard tab) */}
-          <Challenge dataVersion={dataVersion} journal={journal} embedded />
+          {/* Account Data strip (right under the graph) + Payout Requirements
+              (funded accounts only). */}
+          <AccountData d={d} journal={journal} c={chal} />
 
-          {/* Calendar — full width, MFFU style */}
+          {/* Calendar — full width, MFFU style. Key on the account so it re-opens
+              on that account's latest month (or the current month if it's blank)
+              instead of staying stuck on the first-loaded account's month. */}
           <div style={{ marginBottom: 14 }}>
-            <ProfitCalendar equity={d.equity} conv={conv} onDayClick={setReviewDay} />
+            <ProfitCalendar key={journal.id} equity={d.equity} payouts={chal?.payout?.history} funded={journal.phase === 'funded'} conv={conv} onDayClick={setReviewDay} />
           </div>
+
+          {/* All-time Statistics grid */}
+          <DashboardStats d={d} />
+
+          {/* Trade Reports — performance / count / win-rate by duration / day / week / month */}
+          <TradeReports dataVersion={dataVersion + localV} />
+
+          {/* Closed trades — this account's trades */}
+          <ClosedTrades dataVersion={dataVersion} journal={journal} />
 
           {/* Evaluation + breakdown charts */}
           <div className="grid" style={{ gridTemplateColumns: '1.15fr 1fr 1fr 1fr', alignItems: 'start' }}>
@@ -352,7 +480,7 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
               <h2>Performance by Instrument</h2>
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={Object.entries(d.byProduct).map(([k, v]) => ({ name: k, pnl: v.pnl }))}>
-                  <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+                  <CartesianGrid stroke="rgba(128,128,128,0.18)" strokeDasharray="3 3" />
                   <XAxis dataKey="name" stroke="#6b7280" fontSize={11} />
                   <YAxis stroke="#6b7280" fontSize={11} tickFormatter={(v) => `$${v}`} />
                   <Tooltip contentStyle={tooltipStyle} formatter={(v) => money(v)} />
@@ -367,7 +495,7 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
               <h2>Performance by Weekday</h2>
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={d.byDow}>
-                  <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+                  <CartesianGrid stroke="rgba(128,128,128,0.18)" strokeDasharray="3 3" />
                   <XAxis dataKey="dow" stroke="#6b7280" fontSize={11} tickFormatter={(x) => DOW[x]} />
                   <YAxis stroke="#6b7280" fontSize={11} tickFormatter={(v) => `$${v}`} />
                   <Tooltip contentStyle={tooltipStyle} formatter={(v) => money(v)} labelFormatter={(x) => DOW[x]} />
@@ -388,7 +516,7 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
                       <stop offset="100%" stopColor="#16a34a" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+                  <CartesianGrid stroke="rgba(128,128,128,0.18)" strokeDasharray="3 3" />
                   <XAxis dataKey="date" stroke="#6b7280" fontSize={10} />
                   <YAxis stroke="#6b7280" fontSize={11} tickFormatter={(v) => `$${v}`} />
                   <Tooltip contentStyle={tooltipStyle} formatter={(v) => money(v)} />
@@ -399,8 +527,17 @@ export default function Overview({ dataVersion, journal, onOpenImport }) {
             </div>
           </div>
         </>
-      )}
       {reviewDay && <DayPanel date={reviewDay} onClose={() => setReviewDay(null)} onChanged={() => setLocalV((v) => v + 1)} />}
+      {passOpen && (
+        <PassFundedModal firm={journal.firm} evalName={journal.name}
+          onCancel={() => setPassOpen(false)}
+          onConfirm={(name) => { setPassOpen(false); archive('passed', name); }} />
+      )}
+      {payoutOpen && chal?.payout && (
+        <PayoutModal payout={chal.payout}
+          onCancel={() => setPayoutOpen(false)}
+          onDone={() => { setPayoutOpen(false); setLocalV((v) => v + 1); onDataChanged?.(); }} />
+      )}
     </>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ResponsiveContainer, AreaChart, Area, YAxis, ReferenceLine } from 'recharts';
 import { api, money, fmt } from '../api.js';
+import Lightbox from '../components/Lightbox.jsx';
 
 function DayCurve({ points }) {
   if (!points || points.length < 2) return <div className="muted" style={{ fontSize: 12, alignSelf: 'center' }}>—</div>;
@@ -35,6 +36,7 @@ function Stat({ label, value, cls }) {
 function DailyLog({ day, onClose, onSaved }) {
   const [note, setNote] = useState(day.note || '');
   const [saving, setSaving] = useState(false);
+  const [lb, setLb] = useState(null); // { images, start } for the screenshot lightbox
   const save = async () => {
     setSaving(true);
     await api(`/day-log/${day.date}`, { method: 'PUT', body: { note } });
@@ -44,6 +46,8 @@ function DailyLog({ day, onClose, onSaved }) {
   };
   const title = new Date(day.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
   return (
+    <>
+    {lb && <Lightbox images={lb.images} start={lb.start} onClose={() => setLb(null)} />}
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ width: 640 }} onClick={(e) => e.stopPropagation()}>
         <button className="x" onClick={onClose}>✕</button>
@@ -65,9 +69,9 @@ function DailyLog({ day, onClose, onSaved }) {
           <div style={{ marginBottom: 14 }}>
             <label className="stat-label">Screenshots ({day.screenshots.length}) — from this day's trades</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-              {day.screenshots.map((name) => (
+              {day.screenshots.map((name, idx) => (
                 <img key={name} src={`/api/screenshots/${name}`} alt="trade screenshot"
-                  onClick={() => window.open(`/api/screenshots/${name}`, '_blank')}
+                  onClick={() => setLb({ images: day.screenshots.map((n) => `/api/screenshots/${n}`), start: idx })}
                   style={{ height: 110, borderRadius: 8, border: '1px solid var(--border)', cursor: 'zoom-in' }} />
               ))}
             </div>
@@ -82,6 +86,7 @@ function DailyLog({ day, onClose, onSaved }) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 

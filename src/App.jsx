@@ -1,16 +1,44 @@
+import './firebase-init.js'
 import React, { useEffect, useRef, useState } from 'react';
-import { Routes, Route, NavLink, useNavigate } from 'react-router-dom';
+import { Routes, Route, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import Overview from './pages/Overview.jsx';
 import Portfolio from './pages/Portfolio.jsx';
 import Journal from './pages/Journal.jsx';
+import Challenge from './pages/Challenge.jsx';
 import Analytics from './pages/Analytics.jsx';
 import Patterns from './pages/Patterns.jsx';
-import Trades from './pages/Trades.jsx';
+import Review from './pages/Review.jsx';
+import Playbook from './pages/Playbook.jsx';
+import Archive from './pages/Archive.jsx';
+import Expenses from './pages/Expenses.jsx';
+import Payouts from './pages/Payouts.jsx';
+import Welcome from './pages/Welcome.jsx';
 import Settings from './pages/Settings.jsx';
 import { api, setActiveJournalId } from './api.js';
-import { PRESETS } from './presets.js';
+import { PRESETS, accountPrefix } from './presets.js';
+import Dropdown from './components/Dropdown.jsx';
 
 const money0 = (n) => `$${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+
+// Sidebar nav icons (inline line-SVGs, one per section).
+const ico = (p) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{p}</svg>
+);
+const NAV = [
+  { to: '/', end: true, label: 'Dashboard', icon: ico(<><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="8" rx="1.5" /><rect x="3" y="13" width="8" height="8" rx="1.5" /><rect x="13" y="13" width="8" height="8" rx="1.5" /></>) },
+  { to: '/challenges', label: 'Challenges', icon: ico(<><path d="M6 4h12v3a6 6 0 0 1-12 0V4Z" /><path d="M6 6H4a2 2 0 0 0 2 3M18 6h2a2 2 0 0 1-2 3M9.5 15h5M12 15v3M8 21h8" /></>) },
+  { to: '/funded', label: 'Funded', icon: ico(<><circle cx="12" cy="12" r="9" /><path d="M15 9.2a3 2 0 0 0-3-1.4c-1.7 0-3 .9-3 2 0 2.6 6 1.4 6 4 0 1.1-1.3 2-3 2a3 2 0 0 1-3-1.4M12 6v1.6M12 16.4V18" /></>) },
+  { to: '/journal', label: 'Daily Journal', icon: ico(<><path d="M5 4a2 2 0 0 1 2-2h11v20H7a2 2 0 0 1-2-2V4Z" /><path d="M9 6h5M9 10h5M9 14h3" /></>) },
+  { divider: true },
+  { to: '/analytics', label: 'Analytics', icon: ico(<><path d="M5 20V11M12 20V4M19 20v-6M3 20h18" /></>) },
+  { to: '/patterns', label: 'Patterns', icon: ico(<><path d="M12 3l1.7 4.1L18 9l-4.3 1.9L12 15l-1.7-4.1L6 9l4.3-1.9L12 3Z" /><path d="M18.5 15l.8 1.9L21 18l-1.7.7-.8 2-.8-2L16 18l1.7-.6.8-2.4Z" /></>) },
+  { to: '/review', label: 'Film Room', icon: ico(<><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M10 9l5 3-5 3V9Z" /></>) },
+  { to: '/playbook', label: 'Playbook', icon: ico(<><path d="M12 5a4 4 0 0 0-4-4H3v16h5a4 4 0 0 1 4 3 4 4 0 0 1 4-3h5V1h-5a4 4 0 0 0-4 4Z" /><path d="M12 5v16" /></>) },
+  { to: '/expenses', label: 'Expenses', icon: ico(<><path d="M6 2h9l3 3v16l-2.4-1.5L13 21l-2.5-1.5L8 21l-2-1.5V2Z" /><path d="M9 8h6M9 12h6M9 16h4" /></>) },
+  { to: '/payouts', label: 'Payouts', icon: ico(<><rect x="2" y="6" width="20" height="13" rx="2" /><path d="M2 10h20M16 15h3" /></>) },
+  { to: '/archive', label: 'Archive', icon: ico(<><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4" /></>) },
+  { to: '/settings', label: 'Settings', icon: ico(<><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M16.9 16.9l2.1 2.1M4.9 19.1l2.1-2.1M16.9 7.1l2.1-2.1" /></>) },
+];
 
 // First-run "Create a Journal" (Edgewonk-style). Markets are fixed to NQ/ES
 // futures. A firm preset pre-fills the challenge rules; everything stays
@@ -20,21 +48,30 @@ function CreateJournalModal({ onCreated, onClose, blocking, initialPhase }) {
   // Only presets matching the type the user is adding (challenge vs funded).
   const options = Object.entries(PRESETS).filter(([k, p]) =>
     (isFunded ? p.phase === 'funded' : p.phase !== 'funded') || k === 'custom');
-  const defaultKey = options[0][0];
+  // Default to the Apex 50K EOD plan (eval or funded); fall back to the first option.
+  const preferKey = isFunded ? 'apex-50K-pa' : 'apex-50K-eval';
+  const defaultKey = options.some(([k]) => k === preferKey) ? preferKey : options[0][0];
   const [name, setName] = useState('');
+  const [suffix, setSuffix] = useState(''); // number typed after a locked firm prefix
   const [presetKey, setPresetKey] = useState(defaultKey);
   const [r, setR] = useState({ ...PRESETS[defaultKey] });
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [advanced, setAdvanced] = useState(false);
+  const [cost, setCost] = useState('');
   const [busy, setBusy] = useState(false);
 
   const applyPreset = (key) => { setPresetKey(key); setR({ ...PRESETS[key] }); };
   const set = (k, v) => setR((cur) => ({ ...cur, [k]: v }));
 
+  // Firms assign a fixed account-id prefix (Apex eval "APEX…", Lucid eval "LFE…",
+  // Apex funded "PAAPEX…") — lock it and let the user type only the number. Firms
+  // without a known prefix (or Custom) get a plain editable name.
+  const prefix = accountPrefix(r.firm, isFunded ? 'funded' : 'eval');
+  const finalName = prefix ? `${prefix}${suffix.trim()}` : name.trim();
+  const canCreate = prefix ? suffix.trim().length > 0 : name.trim().length > 0;
+
   const create = async () => {
-    if (!name.trim()) return;
+    if (!canCreate) return;
     setBusy(true);
-    const j = await api('/journals', { method: 'POST', body: { name: name.trim(), deposit_date: date, ...r } });
+    const j = await api('/journals', { method: 'POST', body: { name: finalName, cost: Number(cost) || 0, ...r } });
     setBusy(false);
     onCreated(j);
   };
@@ -42,12 +79,16 @@ function CreateJournalModal({ onCreated, onClose, blocking, initialPhase }) {
   // Read-only rule rows derived from the chosen preset (the firm defines these).
   const ruleRows = [
     ['Account size', money0(r.start_balance)],
+    // Min. days to pass is a CONSEQUENCE of the consistency cap (a day can't exceed
+    // X% of total profit → you need ≥ ⌈100/X⌉ days; no consistency = 1 day).
+    !isFunded && r.profit_target > 0 && ['Min. days to pass', String(r.consistency_pct > 0 ? Math.ceil(100 / r.consistency_pct) : 1)],
     r.profit_target > 0 && ['Profit target', money0(r.profit_target)],
-    ['Max drawdown (EOD)', money0(r.trailing_dd)],
+    ['Max drawdown', money0(r.trailing_dd)],
+    ['Drawdown type', 'End Of Day'],
     r.daily_loss_limit > 0 && ['Daily loss limit', money0(r.daily_loss_limit)],
     r.consistency_pct > 0 && ['Consistency', `${r.consistency_pct}%`],
-    r.max_contracts > 0 && ['Max contracts', `${r.max_contracts} mini`],
-    ['Drawdown stops', r.dd_stop_mode === 'never' ? 'never (trails peak)' : r.dd_stop_mode === 'target' ? 'at start + target' : `at start + ${money0(r.dd_buffer)}`],
+    r.max_contracts > 0 && ['Max contracts', `${r.max_contracts} mini / ${r.max_contracts * 10} micro`],
+    ['Platform', 'Tradovate'],
     r.min_profit_days > 0 && ['Payout', `${r.min_profit_days} days ≥ ${money0(r.min_profit_day_amount)}`],
   ].filter(Boolean);
 
@@ -58,54 +99,85 @@ function CreateJournalModal({ onCreated, onClose, blocking, initialPhase }) {
         <h3>New {isFunded ? 'Funded Account' : 'Challenge'}</h3>
 
         <div className="field">
-          <label>Name</label>
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-            placeholder={isFunded ? 'e.g. Apex 50k PA #1' : 'e.g. Apex 50k Eval #1'}
-            onKeyDown={(e) => e.key === 'Enter' && create()} />
-        </div>
-        <div className="field">
-          <label>Account</label>
-          <select value={presetKey} onChange={(e) => applyPreset(e.target.value)}>
-            {options.map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label>Start date</label>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        </div>
-
-        {/* The preset already defines the rules — show them, don't ask. */}
-        <div className="rules-card">
-          <div className="rules-card-head">Account Rules <span className="market-chip" style={{ marginLeft: 8 }}>NQ / ES</span></div>
-          {ruleRows.map(([k, v]) => (
-            <div key={k} className="rules-card-row"><span>{k}</span><b>{v}</b></div>
-          ))}
-        </div>
-
-        <button className="link-btn" onClick={() => setAdvanced((a) => !a)}>
-          {advanced ? '▾ Hide custom rules' : '▸ Customize rules (advanced)'}
-        </button>
-        {advanced && (
-          <div className="field-row" style={{ flexWrap: 'wrap', marginTop: 8 }}>
-            <div className="field"><label>Size ($)</label><input type="number" value={r.start_balance} onChange={(e) => set('start_balance', Number(e.target.value))} /></div>
-            <div className="field"><label>Target ($)</label><input type="number" value={r.profit_target} onChange={(e) => set('profit_target', Number(e.target.value))} /></div>
-            <div className="field"><label>Max DD ($)</label><input type="number" value={r.trailing_dd} onChange={(e) => set('trailing_dd', Number(e.target.value))} /></div>
-            <div className="field"><label>DLL ($)</label><input type="number" value={r.daily_loss_limit} onChange={(e) => set('daily_loss_limit', Number(e.target.value))} /></div>
-            <div className="field"><label>Consistency (%)</label><input type="number" value={r.consistency_pct} onChange={(e) => set('consistency_pct', Number(e.target.value))} /></div>
-            <div className="field"><label>Max contracts</label><input type="number" value={r.max_contracts} onChange={(e) => set('max_contracts', Number(e.target.value))} /></div>
-            <div className="field"><label>DD stops</label>
-              <select value={r.dd_stop_mode || 'never'} onChange={(e) => set('dd_stop_mode', e.target.value)}>
-                <option value="never">never (trails peak)</option>
-                <option value="buffer">start + buffer</option>
-                <option value="target">start + target</option>
-              </select>
+          <label>{prefix ? `${r.firm} account` : 'Name'}</label>
+          {prefix ? (
+            <div className="prefix-input">
+              <span className="prefix">{prefix}</span>
+              <input autoFocus inputMode="numeric" value={suffix} placeholder={isFunded ? 'Sim funded number' : 'Challenge number'}
+                onChange={(e) => setSuffix(e.target.value.replace(/\D/g, ''))}
+                onKeyDown={(e) => e.key === 'Enter' && canCreate && create()} />
             </div>
-            {r.dd_stop_mode === 'buffer' && <div className="field"><label>Buffer ($)</label><input type="number" value={r.dd_buffer ?? 100} onChange={(e) => set('dd_buffer', Number(e.target.value))} /></div>}
+          ) : (
+            <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
+              placeholder={isFunded ? 'e.g. My 50k PA #1' : 'e.g. My 50k Eval #1'}
+              onKeyDown={(e) => e.key === 'Enter' && create()} />
+          )}
+        </div>
+        <div className="field">
+          <label>Account type</label>
+          <Dropdown value={presetKey} onChange={applyPreset}
+            options={options.map(([k, p]) => ({ value: k, label: p.label }))} />
+        </div>
+        {!isFunded && (
+          <div className="field">
+            <label>Total cost (incl. activation fee)</label>
+            <div className="prefix-input">
+              <span className="prefix">$</span>
+              <input inputMode="decimal" value={cost} placeholder="e.g. 167"
+                onChange={(e) => setCost(e.target.value.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1'))} />
+            </div>
+          </div>
+        )}
+
+        {presetKey === 'custom' ? (
+          /* Custom plan — edit every rule yourself; optional ones toggle on/off. */
+          <div className="rules-card">
+            <div className="rules-card-head">Custom Rules</div>
+            <div className="rules-grid">
+              <div className="field"><label>Size ($)</label><input type="number" value={r.start_balance} onChange={(e) => set('start_balance', Number(e.target.value))} /></div>
+              <div className="field"><label>Target ($)</label><input type="number" value={r.profit_target} onChange={(e) => set('profit_target', Number(e.target.value))} /></div>
+              <div className="field"><label>Max drawdown ($)</label><input type="number" value={r.trailing_dd} onChange={(e) => set('trailing_dd', Number(e.target.value))} /></div>
+              <div className="field"><label>Max contracts</label><input type="number" value={r.max_contracts} onChange={(e) => set('max_contracts', Number(e.target.value))} /></div>
+              <div className="field">
+                <label className="rule-toggle">
+                  <span className="switch"><input type="checkbox" checked={r.consistency_pct > 0}
+                    onChange={(e) => set('consistency_pct', e.target.checked ? 50 : 0)} /><span className="slider" /></span>
+                  Consistency rule
+                </label>
+                {r.consistency_pct > 0 && <input type="number" value={r.consistency_pct}
+                  onChange={(e) => set('consistency_pct', Number(e.target.value))} placeholder="% of total profit" />}
+              </div>
+              <div className="field">
+                <label className="rule-toggle">
+                  <span className="switch"><input type="checkbox" checked={r.daily_loss_limit > 0}
+                    onChange={(e) => set('daily_loss_limit', e.target.checked ? 1000 : 0)} /><span className="slider" /></span>
+                  Daily loss limit
+                </label>
+                {r.daily_loss_limit > 0 && <input type="number" value={r.daily_loss_limit}
+                  onChange={(e) => set('daily_loss_limit', Number(e.target.value))} placeholder="$ per day" />}
+              </div>
+              <div className="field"><label>Drawdown stops</label>
+                <select value={r.dd_stop_mode || 'never'} onChange={(e) => set('dd_stop_mode', e.target.value)}>
+                  <option value="never">never (trails peak)</option>
+                  <option value="buffer">start + buffer</option>
+                  <option value="target">start + target</option>
+                </select>
+              </div>
+              {r.dd_stop_mode === 'buffer' && <div className="field"><label>Buffer ($)</label><input type="number" value={r.dd_buffer ?? 100} onChange={(e) => set('dd_buffer', Number(e.target.value))} /></div>}
+            </div>
+          </div>
+        ) : (
+          /* Defined firm plan — rules are fixed, just show them. */
+          <div className="rules-card">
+            <div className="rules-card-head">Account Rules</div>
+            {ruleRows.map(([k, v]) => (
+              <div key={k} className="rules-card-row"><span>{k}</span><b>{v}</b></div>
+            ))}
           </div>
         )}
 
         <div className="row" style={{ marginTop: 14 }}>
-          <button onClick={create} disabled={busy || !name.trim()}>Create {isFunded ? 'Funded Account' : 'Challenge'}</button>
+          <button onClick={create} disabled={busy || !canCreate}>Create {isFunded ? 'Funded Account' : 'Challenge'}</button>
           {!blocking && <button className="ghost" onClick={onClose}>Cancel</button>}
         </div>
       </div>
@@ -127,12 +199,13 @@ function ImportModal({ onImported, onClose }) {
     for (const f of files) fd.append('files', f);
     try {
       const { results } = await api('/import', { method: 'POST', body: fd });
-      setResults(results);
       onImported();
+      if (results.some((r) => r.error)) { setResults(results); setBusy(false); } // keep open on error
+      else onClose(); // success → close automatically
     } catch (e) {
       setResults([{ file: 'import', error: e.message }]);
+      setBusy(false);
     }
-    setBusy(false);
   };
 
   return (
@@ -144,11 +217,13 @@ function ImportModal({ onImported, onClose }) {
           <label>Importer Type</label>
           <select disabled><option>Tradovate (CSV export)</option></select>
         </div>
-        <div className="infobox">
+        <div style={{ fontSize: 15, lineHeight: 1.55, margin: '2px 0 12px' }}>
           In Tradovate: <b>Reports → Fills</b> (preferred) or <b>Reports → Performance</b> → Export CSV.
-          Re-importing overlapping date ranges is safe — duplicates are skipped.
-          Non-NQ/ES rows are ignored.
         </div>
+        <ul className="import-notes">
+          <li>Overlapping date ranges are safe to re-import</li>
+          <li>Duplicates are skipped</li>
+        </ul>
         <div
           className={`dropzone ${over ? 'over' : ''}`}
           onClick={() => fileRef.current.click()}
@@ -178,32 +253,119 @@ function ImportModal({ onImported, onClose }) {
   );
 }
 
+function AuthScreen({ needsSetup, onAuthed }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const mode = needsSetup ? 'register' : 'login';
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const { user } = await api(`/auth/${mode}`, { method: 'POST', body: { email, password } });
+      onAuthed(user);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="auth-shell">
+      <form className="auth-panel" onSubmit={submit}>
+        <div className="auth-mark">
+          <svg className="logo-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 17l5-5 4 3 7-8" /><path d="M16 4h5v5" />
+          </svg>
+          <span>Trade Journal</span>
+        </div>
+        <h1>{needsSetup ? 'Create your login' : 'Sign in'}</h1>
+        <div className="field">
+          <label>Email</label>
+          <input type="email" autoFocus autoComplete="email" value={email}
+            onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+        </div>
+        <div className="field">
+          <label>Password</label>
+          <input type="password" autoComplete={needsSetup ? 'new-password' : 'current-password'} value={password}
+            onChange={(e) => setPassword(e.target.value)} placeholder={needsSetup ? 'At least 8 characters' : 'Password'} />
+        </div>
+        {error && <div className="auth-error">{error}</div>}
+        <button className="auth-submit" disabled={busy || !email.trim() || password.length < 1}>
+          {busy ? 'Please wait...' : needsSetup ? 'Create account' : 'Sign in'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function App() {
+  const [auth, setAuth] = useState(null);
   const [journals, setJournals] = useState(null);
   const [activeId, setActiveId] = useState(null);
   const [dataVersion, setDataVersion] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [balance, setBalance] = useState(null);
-  const navigate = useNavigate();
-
-  // Load journals; default the Dashboard to the MOST RECENTLY IMPORTED account
-  // (fall back to the last one you viewed, then the first).
+  const [viewingArchived, setViewingArchived] = useState(null); // an archived acct opened for viewing
+  // Light / dark theme — initial value comes from the pre-paint script in index.html.
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'dark');
   useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    api('/me').then(setAuth).catch(() => setAuth({ user: null, needsSetup: true }));
+  }, []);
+
+  // Open an archived (passed/blown) account for read-only viewing — its data
+  // isn't in the active `journals` list, so keep the object around to resolve
+  // `active` and show it in the switcher while it's selected.
+  const viewArchived = (j) => { setViewingArchived(j); selectJournal(j.id); navigate('/'); };
+
+  // Load journals; restore the account you were last on (persists across
+  // refreshes), else the most-recently-imported, else the first.
+  useEffect(() => {
+    if (!auth?.user) return;
     api('/journals').then((js) => {
       setJournals(js);
+      // After a pass, land on the freshly-created funded account (set by Challenge).
+      const pending = Number(localStorage.getItem('pendingActive'));
+      localStorage.removeItem('pendingActive');
+      const pendingJ = pending ? js.find((j) => j.id === pending) : null;
       const byImport = [...js].filter((j) => j.last_import_at)
         .sort((a, b) => b.last_import_at.localeCompare(a.last_import_at))[0];
       const saved = js.find((j) => j.id === Number(localStorage.getItem('activeJournal')));
-      const pick = byImport || saved || js[0];
+      // Persist the account you were on across refreshes: the last-selected
+      // account wins, so a refresh keeps you where you were (only fall back to
+      // the most-recently-imported / first account on a brand-new session).
+      const pick = pendingJ || saved || byImport || js[0];
       if (pick) selectJournal(pick.id);
     });
-  }, []);
+  }, [auth?.user]);
+
+  const logout = async () => {
+    await api('/auth/logout', { method: 'POST' }).catch(() => {});
+    setAuth((cur) => ({ user: null, needsSetup: cur?.needsSetup || false }));
+    setJournals(null);
+    setActiveId(null);
+    setActiveJournalId(null);
+    setBalance(null);
+    navigate('/');
+  };
 
   // Delete an account (with its data); reassign active if it was the open one.
   const removeJournal = async (a) => {
-    if (!confirm(`Delete "${a.name}" and all its trades, notes and payouts? This can't be undone.`)) return;
+    if (!confirm(`Delete "${a.name}" and its trades, notes and payouts?\n\nIts Film Room clips are KEPT (they move to the Library). This can't be undone.`)) return false;
     await api(`/journals/${a.id}`, { method: 'DELETE' });
+    setViewingArchived((v) => (v && v.id === a.id ? null : v));
     const js = await api('/journals');
     setJournals(js);
     if (a.id === activeId) {
@@ -211,6 +373,7 @@ export default function App() {
     } else {
       setDataVersion((v) => v + 1);
     }
+    return true;
   };
 
   const selectJournal = (id) => {
@@ -220,58 +383,88 @@ export default function App() {
     setDataVersion((v) => v + 1);
   };
 
+  // Keep the in-memory journals in sync when a child edits a journal in place
+  // (e.g. broker credentials). Without this, `active` stays stale and switching
+  // away and back shows the pre-edit values.
+  const patchJournalLocal = (id, patch) => {
+    setJournals((js) => (js ? js.map((j) => (j.id === id ? { ...j, ...patch } : j)) : js));
+    setViewingArchived((v) => (v && v.id === id ? { ...v, ...patch } : v));
+  };
+
   // Sidebar account balance (start + net P&L of active journal).
   useEffect(() => {
-    if (!activeId) return;
-    api('/dashboard').then((d) => setBalance(d.startBalance + d.totalPnl)).catch(() => setBalance(null));
+    if (!activeId) { setBalance(null); return; } // no account → clear stale balance
+    api('/dashboard').then((d) => setBalance(d.startBalance + d.totalPnl - (d.paidOut || 0))).catch(() => setBalance(null));
   }, [activeId, dataVersion]);
 
+  if (auth === null) return null;
+  if (!auth.user) return <AuthScreen needsSetup={auth.needsSetup} onAuthed={(user) => setAuth({ user, needsSetup: false })} />;
   if (journals === null) return null;
-  const active = journals.find((j) => j.id === activeId);
+  const active = journals.find((j) => j.id === activeId)
+    || (viewingArchived && viewingArchived.id === activeId ? viewingArchived : null);
   const needsFirstJournal = journals.length === 0;
+  const showWelcome = location.pathname === '/' && needsFirstJournal;
+  const requiresActive = ['/','/challenge','/analytics','/settings'];
+  const showRoutes = !!active || !requiresActive.includes(location.pathname);
 
   return (
     <div className="layout">
       <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
-        <div className="logo">📈 Trade Journal</div>
-        {/* One clean account switcher (the Dashboard follows it) + import. */}
-        {journals.length > 0 && (
-          <select className="journal-select" value={activeId || ''} onChange={(e) => selectJournal(Number(e.target.value))}>
+        <div className="logo" onClick={() => navigate('/')} title="Go to Dashboard">
+          <svg className="logo-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 17l5-5 4 3 7-8" /><path d="M16 4h5v5" />
+          </svg>
+          <span>Trade Journal</span>
+        </div>
+        {/* One clean account switcher (the Dashboard follows it). */}
+        {(journals.length > 0 || viewingArchived) && (
+          <select className="journal-select" value={activeId || ''}
+            onChange={(e) => { setViewingArchived(null); selectJournal(Number(e.target.value)); navigate('/'); }}>
             {journals.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
+            {viewingArchived && !journals.some((j) => j.id === viewingArchived.id) && (
+              <option value={viewingArchived.id}>{viewingArchived.name} (archived)</option>
+            )}
           </select>
         )}
-        <div className="sidebar-actions">
-          <button onClick={() => setShowImport(true)} disabled={!active}>＋ Import Trades</button>
-        </div>
-        <nav style={{ marginTop: 14 }}>
-          <NavLink className="nav-link" to="/" end>Dashboard</NavLink>
-          <NavLink className="nav-link" to="/journal">Daily Journal</NavLink>
-          <NavLink className="nav-link" to="/challenges">Challenges</NavLink>
-          <NavLink className="nav-link" to="/funded">Funded</NavLink>
-          <div className="nav-divider" />
-          <NavLink className="nav-link" to="/analytics">Analytics</NavLink>
-          <NavLink className="nav-link" to="/patterns">Patterns</NavLink>
-          <NavLink className="nav-link" to="/trades">Trades</NavLink>
-          <NavLink className="nav-link" to="/settings">Settings</NavLink>
+        {active && (
+          <div className="sidebar-balance">
+            <div className="b">{balance == null ? '—' : `$${balance.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}</div>
+            <div className="l">Account Balance</div>
+          </div>
+        )}
+        <div className="nav-divider" style={{ marginTop: 12 }} />
+        <nav>
+          {NAV.map((n, i) => n.divider
+            ? <div key={i} className="nav-divider" />
+            : <NavLink key={n.to} className="nav-link" to={n.to} end={n.end}>{n.icon}{n.label}</NavLink>)}
         </nav>
-        <div className="sidebar-balance">
-          <div className="b">{balance == null ? '—' : `$${balance.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}</div>
-          <div className="l">Account Balance</div>
+        <div className="theme-switch" role="button" title="Toggle light / dark mode"
+          onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}>
+          <span className={`ts-label ${theme === 'dark' ? 'on' : ''}`}>DARK</span>
+          <span className={`ts-track ${theme}`}><span className="ts-knob" /></span>
+          <span className={`ts-label ${theme === 'light' ? 'on' : ''}`}>LIGHT</span>
         </div>
+        <button className="logout-btn" onClick={logout}>Sign out</button>
       </aside>
       <main className="main">
-        {active && (
+        {showWelcome && <Welcome onCreate={(phase) => setShowCreate(phase)} />}
+        {showRoutes && (
           <Routes>
-            <Route path="/" element={<Overview dataVersion={dataVersion} journal={active} onOpenImport={() => setShowImport(true)} />} />
+            <Route path="/" element={active ? <Overview dataVersion={dataVersion} journal={active} onOpenImport={() => setShowImport(true)} onDataChanged={() => setDataVersion((v) => v + 1)} onJournalPatched={patchJournalLocal} /> : <Welcome onCreate={(phase) => setShowCreate(phase)} />} />
             <Route path="/journal" element={<Journal dataVersion={dataVersion} />} />
             <Route path="/challenges" element={<Portfolio dataVersion={dataVersion} filter="eval"
               onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} onDelete={removeJournal} />} />
             <Route path="/funded" element={<Portfolio dataVersion={dataVersion} filter="funded"
               onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} onDelete={removeJournal} />} />
-            <Route path="/analytics" element={<Analytics dataVersion={dataVersion} journal={active} />} />
+            <Route path="/challenge" element={active ? <Challenge dataVersion={dataVersion} journal={active} /> : <div className="panel muted">Select an account to view challenge details.</div>} />
+            <Route path="/analytics" element={active ? <Analytics dataVersion={dataVersion} journal={active} /> : <div className="panel muted">Select an account to view analytics.</div>} />
             <Route path="/patterns" element={<Patterns dataVersion={dataVersion} />} />
-            <Route path="/trades" element={<Trades dataVersion={dataVersion} />} />
-            <Route path="/settings" element={<Settings journal={active} onChanged={(js) => {
+            <Route path="/review" element={<Review dataVersion={dataVersion} />} />
+            <Route path="/playbook" element={<Playbook />} />
+            <Route path="/archive" element={<Archive onView={viewArchived} onDelete={removeJournal} />} />
+            <Route path="/expenses" element={<Expenses dataVersion={dataVersion} />} />
+            <Route path="/payouts" element={<Payouts dataVersion={dataVersion} />} />
+            <Route path="/settings" element={active ? <Settings journal={active} onChanged={(js) => {
               if (js) setJournals(js);
               setDataVersion((v) => v + 1);
             }} onJournalsChanged={async () => {
@@ -280,14 +473,13 @@ export default function App() {
               if (!js.find((j) => j.id === activeId)) {
                 if (js[0]) selectJournal(js[0].id); else { setActiveId(null); setActiveJournalId(null); }
               }
-            }} />} />
+            }} /> : <div className="panel muted">Select an account to view settings.</div>} />
           </Routes>
         )}
       </main>
 
-      {(needsFirstJournal || showCreate) && (
+      {showCreate && (
         <CreateJournalModal
-          blocking={needsFirstJournal}
           initialPhase={typeof showCreate === 'string' ? showCreate : 'eval'}
           onClose={() => setShowCreate(false)}
           onCreated={async (j) => {

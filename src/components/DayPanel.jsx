@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, money } from '../api.js';
 import TradePanel, { parseJsonArr, fmtDur } from './TradePanel.jsx';
+import Lightbox from './Lightbox.jsx';
 
 // Day Review — opened by clicking a traded day on the profit calendar. Shows
 // every trade of that day with its annotations and screenshots (the
@@ -9,6 +10,7 @@ export default function DayPanel({ date, onClose, onChanged }) {
   const [trades, setTrades] = useState(null);
   const [editing, setEditing] = useState(null);
   const [v, setV] = useState(0);
+  const [lb, setLb] = useState(null); // { images, start } for the screenshot lightbox
   // Manual day entry (P&L typed in without per-trade data, e.g. from a prop
   // firm dashboard). One per date.
   const [manual, setManual] = useState(null);
@@ -114,9 +116,9 @@ export default function DayPanel({ date, onClose, onChanged }) {
               {t.notes && <div className="day-notes">{t.notes}</div>}
               {shots.length > 0 && (
                 <div className="day-shots">
-                  {shots.map((name) => (
+                  {shots.map((name, idx) => (
                     <img key={name} src={`/api/screenshots/${name}`} alt="trade screenshot"
-                      onClick={() => window.open(`/api/screenshots/${name}`, '_blank')} />
+                      onClick={() => setLb({ images: shots.map((n) => `/api/screenshots/${n}`), start: idx })} />
                   ))}
                 </div>
               )}
@@ -134,6 +136,7 @@ export default function DayPanel({ date, onClose, onChanged }) {
       {editing && (
         <TradePanel trade={editing} onClose={() => setEditing(null)} onSaved={() => setV((x) => x + 1)} />
       )}
+      {lb && <Lightbox images={lb.images} start={lb.start} onClose={() => setLb(null)} />}
     </>
   );
 }

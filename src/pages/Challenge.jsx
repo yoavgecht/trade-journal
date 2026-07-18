@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, money, fmt } from '../api.js';
+import { fundedRulesFor } from '../presets.js';
+import PassFundedModal from '../components/PassFundedModal.jsx';
 
 function Bar({ pct, color }) {
   return (
@@ -23,6 +26,8 @@ export default function Challenge({ dataVersion, journal, embedded }) {
   const [v, setV] = useState(0);
   const [payDate, setPayDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [payAmt, setPayAmt] = useState('');
+  const [passOpen, setPassOpen] = useState(false);
+  const navigate = useNavigate();
   useEffect(() => { api('/challenge').then(setC); }, [dataVersion, journal.id, v]);
   if (!c) return null;
 
@@ -40,6 +45,29 @@ export default function Challenge({ dataVersion, journal, embedded }) {
     : c.status === 'failed' ? 'BLOWN' : 'IN PROGRESS';
   const ddPct = c.drawdown.trailingDd > 0 ? (c.drawdown.distance / c.drawdown.trailingDd) * 100 : 0;
   const ddColor = ddPct < 35 ? 'var(--red)' : ddPct < 60 ? '#f59e0b' : 'var(--green)';
+
+  // Passed / Blown — enable automatically. Pass = target reached (evals only);
+  // Blown = balance hit the trailing stop (evals AND funded). Archiving keeps
+  // all the data; a pass also spins up a matching funded account.
+  const isEval = (c.phase || journal.phase) !== 'funded';
+  const canPass = isEval && c.status === 'passed';
+  const canBlow = c.status === 'failed';
+  const archive = async (outcome, fundedName = null) => {
+    let fundedRules = null;
+    if (outcome === 'passed') {
+      fundedRules = fundedRulesFor(journal.firm, journal.start_balance);
+    } else if (!window.confirm(`Archive "${journal.name}" as BLOWN?\n\nAll its data (P&L, trades, chart) is kept for your records.`)) {
+      return;
+    }
+    const r = await api(`/journals/${journal.id}/archive`, { method: 'POST', body: { outcome, fundedName, fundedRules } });
+    // On a pass, land on the brand-new (blank) funded account after the reload.
+    if (r?.funded) localStorage.setItem('pendingActive', String(r.funded.id));
+    if (outcome === 'passed') {
+      window.location.assign('/');
+    } else {
+      window.location.assign('/archive');
+    }
+  };
 
   return (
     <>
@@ -63,6 +91,25 @@ export default function Challenge({ dataVersion, journal, embedded }) {
             {c.daysAfterPass > 0 && <> Your {c.daysAfterPass} day(s) of trading after that wouldn't be on this eval (they'd belong to the PA).</>}
           </div>
         )}
+        <div className="row" style={{ marginTop: 12, gap: 10, alignItems: 'center' }}>
+          {isEval && (
+            <button onClick={() => canPass && setPassOpen(true)} disabled={!canPass}
+              style={{ background: canPass ? 'var(--green)' : 'var(--panel2)', color: canPass ? '#fff' : 'var(--muted)', cursor: canPass ? 'pointer' : 'not-allowed', fontWeight: 700 }}
+              title={canPass ? 'Archive as PASSED and open a matching funded account' : `Reach the ${money(c.target)} target to enable`}>
+              ✓ Passed
+            </button>
+          )}
+          <button onClick={() => archive('blown')}
+            style={{ background: 'var(--red)', color: '#fff', cursor: 'pointer', fontWeight: 700 }}
+            title="Archive as BLOWN">
+            ✕ Blown
+          </button>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {canPass ? 'Target hit — pass it and spin up the funded account.'
+              : canBlow ? 'Trailing stop breached — archive this account.'
+              : 'These enable automatically at your target or trailing stop.'}
+          </span>
+        </div>
       </div>
 
       {/* Top numbers — hidden when embedded on the Dashboard (the growth blocks
@@ -245,6 +292,12 @@ export default function Challenge({ dataVersion, journal, embedded }) {
         Day-granularity from imported trades + manual days. Drawdown is simulated end-of-day (intraday swings between
         fills aren't visible). Rules come from this journal's settings — keep them matched to your firm.
       </div>
+
+      {passOpen && (
+        <PassFundedModal firm={journal.firm} evalName={journal.name}
+          onCancel={() => setPassOpen(false)}
+          onConfirm={(name) => { setPassOpen(false); archive('passed', name); }} />
+      )}
     </>
   );
 }

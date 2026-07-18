@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"node server/index.js\" \"vite\"",
+    "dev": "concurrently -k \"node --watch server/index.js\" \"vite\"",
     "server": "node server/index.js",
     "build": "vite build",
     "start": "NODE_ENV=production node server/index.js"
@@ -12,6 +12,7 @@
   "dependencies": {
     "better-sqlite3": "^11.3.0",
     "express": "^4.19.2",
+    "firebase": "^12.16.0",
     "multer": "^1.4.5-lts.1",
     "papaparse": "^5.4.1",
     "react": "^18.3.1",

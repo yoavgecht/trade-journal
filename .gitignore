@@ -1,6 +1,8 @@
 node_modules/
+.claude/
 dist/
 journal.db
 journal.db-*
 screenshots/
+videos/
 .DS_Store

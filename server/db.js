@@ -89,7 +89,8 @@ CREATE TABLE IF NOT EXISTS trades (
   pnl REAL,                 -- $ net of fees
   fees REAL DEFAULT 0,
   duration_s INTEGER,
-  source TEXT DEFAULT 'fills' -- fills (paired here) | performance (pre-paired)
+  source TEXT DEFAULT 'fills', -- fills (paired here) | performance (pre-paired)
+  clip_only INTEGER NOT NULL DEFAULT 0 -- 1 = Film Room clip placeholder, NOT a real trade (excluded from every stat/calendar/count)
 );
 
 CREATE TABLE IF NOT EXISTS trade_meta (
@@ -122,6 +123,33 @@ CREATE TABLE IF NOT EXISTS products (
   point_value REAL NOT NULL,
   fee_rt REAL NOT NULL DEFAULT 0  -- round-trip fees+commissions per contract
 );
+
+-- Playbook: a GLOBAL library of annotated chart screenshots (setups, traps,
+-- mistakes, A+ examples…), independent of any journal/trade. Pure study
+-- reference. Image files live in screenshots/ with a 'lib-' prefix.
+CREATE TABLE IF NOT EXISTS library_items (
+  id INTEGER PRIMARY KEY,
+  category TEXT,            -- Setup | Trap | Mistake | A+ Trade | Lesson (free text)
+  title TEXT,
+  note TEXT,
+  filename TEXT NOT NULL,   -- file in screenshots/
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  password_salt TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
 `);
 
 // Pre-screenshots installs: add the column in place (meta is worth keeping).
@@ -134,6 +162,37 @@ if (metaCols.length && !metaCols.includes('screenshots')) {
 const metaCols2 = db.prepare("SELECT name FROM pragma_table_info('trade_meta')").all().map((c) => c.name);
 for (const [col, ddl] of [['stop', 'stop REAL'], ['target', 'target REAL']]) {
   if (metaCols2.length && !metaCols2.includes(col)) db.exec(`ALTER TABLE trade_meta ADD COLUMN ${ddl}`);
+}
+
+// "Film Room" behavioral review — the trader's own read on each trade, graded
+// off the entry/outcome screenshots (not derivable from fills):
+//   direction_call → was the DIRECTIONAL bias right, regardless of P&L? right|wrong
+//   entry_timing   → early | good | late | chased  (the "right idea, wrong moment" axis)
+//   market_move    → trend | pullback | breakout | reversal | range | news (which move it was)
+//   intuition      → plan (followed the plan) | gut (acted on a gut feel)
+//   mfe_points     → max favorable excursion after entry, per-contract points (how far it
+//                    went your way) → vs trade.points captured = points left on the table
+const metaCols3 = db.prepare("SELECT name FROM pragma_table_info('trade_meta')").all().map((c) => c.name);
+for (const [col, ddl] of [
+  ['direction_call', 'direction_call TEXT'],
+  ['entry_timing', 'entry_timing TEXT'],
+  ['market_move', 'market_move TEXT'],
+  ['intuition', 'intuition TEXT'],
+  ['mfe_points', 'mfe_points REAL'],
+  ['video', 'video TEXT'], // Film Room clip filename in videos/ (≤2 min), or null
+]) {
+  if (metaCols3.length && !metaCols3.includes(col)) db.exec(`ALTER TABLE trade_meta ADD COLUMN ${ddl}`);
+}
+
+// Trades: clip_only marks a Film Room clip placeholder (a "trade" created only
+// to hold a video/review, e.g. from a screen recording). It must NOT count as a
+// real trade anywhere — calendar, P&L, challenge/consistency, win rate, counts —
+// but still shows in the Film Room so the clip is watchable.
+const tradeCols = db.prepare("SELECT name FROM pragma_table_info('trades')").all().map((c) => c.name);
+for (const [col, ddl] of [
+  ['clip_only', 'clip_only INTEGER NOT NULL DEFAULT 0'],
+]) {
+  if (tradeCols.length && !tradeCols.includes(col)) db.exec(`ALTER TABLE trades ADD COLUMN ${ddl}`);
 }
 
 // Pre-challenge journals: add the rule columns in place (journals are precious).
@@ -154,6 +213,18 @@ for (const [col, ddl] of [
   ['dd_stop_mode', "dd_stop_mode TEXT NOT NULL DEFAULT 'never'"],
   ['dd_buffer', 'dd_buffer REAL NOT NULL DEFAULT 100'],
   ['last_import_at', 'last_import_at TEXT'], // set on each CSV import → Dashboard defaults to the most recent
+  // Archive: a passed or blown account is kept FOREVER (records/taxes) but moved
+  // out of the active switcher into the Archive view.
+  ['archived', 'archived INTEGER NOT NULL DEFAULT 0'],
+  ['archived_at', 'archived_at TEXT'],
+  ['is_library', 'is_library INTEGER NOT NULL DEFAULT 0'], // hidden holding for clips whose account was deleted
+  ['outcome', 'outcome TEXT'],                        // 'passed' | 'blown'
+  ['parent_journal_id', 'parent_journal_id INTEGER'], // funded acct ← the eval it was passed from
+  ['broker', 'broker TEXT'],                          // e.g. Tradovate — display only (Account Data strip)
+  ['platform', 'platform TEXT'],                      // e.g. TradingView — display only
+  ['cost', 'cost REAL NOT NULL DEFAULT 0'],           // what you paid for this account (eval price + activation fee) — Expenses tab
+  ['broker_username', 'broker_username TEXT'],        // broker login (stored locally, plaintext) — credentials bar
+  ['broker_password', 'broker_password TEXT'],
 ]) {
   if (jCols.length && !jCols.includes(col)) db.exec(`ALTER TABLE journals ADD COLUMN ${ddl}`);
 }

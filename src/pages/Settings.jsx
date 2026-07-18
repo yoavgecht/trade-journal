@@ -25,6 +25,8 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
       body: {
         name: form.name,
         firm: form.firm || null,
+        broker: form.broker || null,
+        platform: form.platform || null,
         phase: form.phase || 'eval',
         start_balance: Number(form.start_balance),
         profit_target: Number(form.profit_target),
@@ -80,6 +82,16 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
               <option value="eval">Eval / Challenge</option>
               <option value="funded">Funded / PA</option>
             </select>
+          </div>
+        </div>
+        <div className="field-row" style={{ maxWidth: 560 }}>
+          <div className="field">
+            <label>Broker</label>
+            <input value={form.broker || ''} onChange={(e) => set('broker', e.target.value)} placeholder="Tradovate" />
+          </div>
+          <div className="field">
+            <label>Platform</label>
+            <input value={form.platform || ''} onChange={(e) => set('platform', e.target.value)} placeholder="TradingView" />
           </div>
         </div>
       </div>

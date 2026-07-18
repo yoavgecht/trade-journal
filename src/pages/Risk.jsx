@@ -47,7 +47,7 @@ export default function Risk({ dataVersion }) {
         ) : (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={r.series}>
-              <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+              <CartesianGrid stroke="rgba(128,128,128,0.18)" strokeDasharray="3 3" />
               <XAxis dataKey="date" stroke="#6b7280" fontSize={11} />
               <YAxis stroke="#6b7280" fontSize={11} domain={['auto', 'auto']} tickFormatter={(v) => `$${v}`} />
               <Tooltip contentStyle={{ background: '#ffffff', border: '1px solid #e5e7eb' }} formatter={(v) => money(v)} />

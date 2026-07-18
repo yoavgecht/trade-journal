@@ -3,10 +3,11 @@ import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip,
   CartesianGrid, ReferenceLine, Cell, Legend,
 } from 'recharts';
-import { api, money, fmt } from '../api.js';
+import { api, money, fmt, winRatePct } from '../api.js';
+import TradeReports from '../components/TradeReports.jsx';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const tip = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 12 };
+const tip = { background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12 };
 
 // Enrich trades with per-day sequence (for after-win/loss + trade-number).
 function enrich(trades) {
@@ -32,19 +33,39 @@ function holdBucket(s) {
 
 // Horizontal bar chart (MFFU-style): category buckets down the left, value bars
 // across. `color(d)` picks the bar color per row.
+// Value label for horizontal bars: negatives sit to the LEFT of the bar, positives
+// to the RIGHT — so a negative bar's number never lands on the zero-line / y-axis
+// labels (Recharts' fixed position:'right' pinned negatives to the center).
+const hBarLabel = (fmt) => (props) => {
+  const { x, y, width, height, value } = props;
+  if (value == null) return null;
+  const pos = value >= 0;
+  return (
+    <text x={pos ? x + width + 5 : x - 5} y={y + height / 2} fontSize={10} fill="#6b7280"
+      textAnchor={pos ? 'start' : 'end'} dominantBaseline="central">{fmt(value)}</text>
+  );
+};
+
 function HBars({ title, data, dataKey, fmt, color, domain }) {
+  // Pad the value axis ~22% on each active side so outside value labels (esp.
+  // large negatives) clear the bars and the y-axis category labels instead of
+  // getting clipped at the plot edge.
+  const vals = data.map((d) => Number(d[dataKey]) || 0);
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  const pad = Math.max(1, (hi - lo) * 0.22);
+  const autoDomain = [lo < 0 ? lo - pad : lo, hi > 0 ? hi + pad : hi];
   return (
     <div>
       <div className="muted" style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{title}</div>
       <ResponsiveContainer width="100%" height={data.length * 26 + 24}>
-        <BarChart layout="vertical" data={data} margin={{ top: 0, right: 44, bottom: 0, left: 0 }}>
-          <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" horizontal={false} />
-          <XAxis type="number" hide domain={domain || ['auto', 'auto']} />
+        <BarChart layout="vertical" data={data} margin={{ top: 0, right: 48, bottom: 0, left: 48 }}>
+          <CartesianGrid stroke="rgba(128,128,128,0.18)" strokeDasharray="3 3" horizontal={false} />
+          <XAxis type="number" hide domain={domain || autoDomain} />
           <YAxis type="category" dataKey="bucket" width={52} stroke="#6b7280" fontSize={10} tickLine={false} axisLine={false} />
-          <Tooltip contentStyle={tip} formatter={(v) => fmt(v)}
+          <Tooltip contentStyle={tip} cursor={false} formatter={(v) => fmt(v)}
             labelFormatter={(b) => { const s = data.find((x) => x.bucket === b); return `${b} · ${s?.n} trades`; }} />
           <ReferenceLine x={0} stroke="#9ca3af" />
-          <Bar dataKey={dataKey} radius={[0, 3, 3, 0]} label={{ position: 'right', fontSize: 10, fill: '#6b7280', formatter: (v) => fmt(v) }}>
+          <Bar dataKey={dataKey} radius={[0, 3, 3, 0]} label={hBarLabel(fmt)}>
             {data.map((d, i) => <Cell key={i} fill={color(d)} />)}
           </Bar>
         </BarChart>
@@ -92,7 +113,7 @@ function bucketStats(trades, dim) {
     return {
       bucket,
       n: list.length,
-      winRate: Math.round((list.filter((t) => t.pnl > 0).length / list.length) * 100),
+      winRate: winRatePct(list), // break-even-adjusted (see BE_BAND in api.js)
       pnl: Math.round(list.reduce((s, t) => s + t.pnl, 0)),
       expectancy: Math.round(list.reduce((s, t) => s + t.pnl, 0) / list.length),
       avgR: rs.length ? Math.round((rs.reduce((s, t) => s + t._R, 0) / rs.length) * 100) / 100 : null,
@@ -166,25 +187,12 @@ export default function Analytics({ dataVersion, journal }) {
   const adjNet = Math.round(adjCum);
   const delta = adjNet - actualNet;
 
-  const durStats = bucketStats(trades, 'Hold time');
-
   return (
     <>
       <h1>Trade Analytics</h1>
 
-      {/* By trade duration — P&L / count / win-rate together (MFFU-style),
-          fine-grained buckets for scalping. */}
-      <div className="panel" style={{ marginBottom: 14 }}>
-        <h2>By trade duration</h2>
-        <div className="grid" style={{ gridTemplateColumns: '1.2fr 1fr 1fr' }}>
-          <HBars title="Performance ($)" data={durStats} dataKey="pnl"
-            fmt={money} color={(d) => (d.pnl >= 0 ? '#16a34a' : '#dc2626')} />
-          <HBars title="Trade count" data={durStats} dataKey="n"
-            fmt={(v) => v} color={() => '#60a5fa'} />
-          <HBars title="Win rate" data={durStats} dataKey="winRate"
-            fmt={(v) => `${v}%`} color={(d) => (d.winRate >= 50 ? '#16a34a' : '#dc2626')} domain={[0, 100]} />
-        </div>
-      </div>
+      {/* Trade Reports — performance / count / win-rate by duration / day / week / month */}
+      <TradeReports trades={trades} />
 
       {/* Per-variable breakdown */}
       <div className="panel" style={{ marginBottom: 14 }}>
@@ -203,10 +211,10 @@ export default function Analytics({ dataVersion, journal }) {
         </div>
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={stats} margin={{ top: 10 }}>
-            <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+            <CartesianGrid stroke="rgba(128,128,128,0.18)" strokeDasharray="3 3" />
             <XAxis dataKey="bucket" stroke="#6b7280" fontSize={11} />
             <YAxis stroke="#6b7280" fontSize={11} tickFormatter={(v) => metric === 'winRate' ? `${v}%` : metric === 'avgR' ? `${v}R` : `$${v}`} />
-            <Tooltip contentStyle={tip} formatter={(v) => metric === 'winRate' ? `${v}%` : metric === 'avgR' ? `${v}R` : money(v)}
+            <Tooltip contentStyle={tip} cursor={false} formatter={(v) => metric === 'winRate' ? `${v}%` : metric === 'avgR' ? `${v}R` : money(v)}
               labelFormatter={(b) => { const s = stats.find((x) => x.bucket === b); return `${b} — ${s?.n} trades, ${s?.winRate}% win`; }} />
             <ReferenceLine y={0} stroke="#9ca3af" />
             <Bar dataKey={metric} name={metricLabel}>
@@ -250,10 +258,10 @@ export default function Analytics({ dataVersion, journal }) {
             </div>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={rBuckets}>
-                <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+                <CartesianGrid stroke="rgba(128,128,128,0.18)" strokeDasharray="3 3" />
                 <XAxis dataKey="bucket" stroke="#6b7280" fontSize={11} />
                 <YAxis stroke="#6b7280" fontSize={11} allowDecimals={false} />
-                <Tooltip contentStyle={tip} formatter={(v) => `${v} trades`} />
+                <Tooltip contentStyle={tip} cursor={false} formatter={(v) => `${v} trades`} />
                 <Bar dataKey="n" name="Trades">
                   {rBuckets.map((b, i) => <Cell key={i} fill={b.bucket.includes('-') || b.bucket.startsWith('≤') ? '#dc2626' : '#16a34a'} />)}
                 </Bar>
@@ -303,10 +311,10 @@ export default function Analytics({ dataVersion, journal }) {
 
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={series}>
-            <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+            <CartesianGrid stroke="rgba(128,128,128,0.18)" strokeDasharray="3 3" />
             <XAxis dataKey="i" stroke="#6b7280" fontSize={11} label={{ value: 'trade #', position: 'insideBottomRight', fontSize: 11, fill: '#6b7280' }} />
             <YAxis stroke="#6b7280" fontSize={11} tickFormatter={(v) => `$${v}`} />
-            <Tooltip contentStyle={tip} formatter={(v) => money(v)} />
+            <Tooltip contentStyle={tip} cursor={false} formatter={(v) => money(v)} />
             <Legend />
             <ReferenceLine y={0} stroke="#9ca3af" />
             <Line type="monotone" dataKey="actual" name="Actual" stroke="#9ca3af" strokeWidth={2} dot={false} />
