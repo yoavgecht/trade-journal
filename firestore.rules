@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // users/{userId}
+    //   Owner profile: displayName, email, photoURL, uid, createdAt, updatedAt.
+    //   No passwords are stored. Firebase Authentication is the auth source.
+    //
+    // users/{userId}/accounts/{accountId}
+    //   Account: name, type ("challenge" | "funded"), propFirm, balances,
+    //   status, flexible rules map, createdAt, updatedAt.
+    //
+    // users/{userId}/accounts/{accountId}/trades/{tradeId}
+    //   Trade source data plus optional nested meta/discipline data.
+    //
+    // users/{userId}/accounts/{accountId}/dailyStats/{YYYY-MM-DD}
+    //   Derived daily stats. Trades remain the source of truth.
+    //
+    // users/{userId}/journal/{entryId}
+    // users/{userId}/playbook/{playbookId}
+    // users/{userId}/filmRoom/{videoId}
+    // users/{userId}/patterns/{patternId}
+    // users/{userId}/payouts/{payoutId}
+    // users/{userId}/settings/{settingId}
+    //
+    // All private app data is rooted under users/{userId}.
+    // ===============================================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function validOptionalString(data, field, maxSize) {
+      return !(field in data) || data[field] == null ||
+        (data[field] is string && data[field].size() <= maxSize);
+    }
+
+    function validOptionalEmail(data) {
+      return !('email' in data) || data.email == null ||
+        (data.email is string && data.email.size() <= 320);
+    }
+
+    function validUserProfile(userId, data) {
+      return data.keys().hasOnly([
+          'displayName', 'email', 'photoURL', 'uid', 'userId', 'authUid',
+          'createdAt', 'updatedAt', 'source'
+        ]) &&
+        validOptionalString(data, 'displayName', 120) &&
+        validOptionalEmail(data) &&
+        validOptionalString(data, 'photoURL', 2048) &&
+        (!('uid' in data) || data.uid == userId) &&
+        (!('authUid' in data) || data.authUid == userId) &&
+        (!('userId' in data) || data.userId == userId);
+    }
+
+    function validOwnedDocument(userId, data) {
+      return (!('uid' in data) || data.uid == userId) &&
+        (!('userId' in data) || data.userId == userId) &&
+        (!('ownerId' in data) || data.ownerId == userId);
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) &&
+        validUserProfile(userId, request.resource.data);
+      allow delete: if false;
+
+      match /{document=**} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+          validOwnedDocument(userId, request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -68,8 +68,14 @@ function AccountCard({ a, onOpen, onDelete }) {
 
 export default function Portfolio({ dataVersion, onOpen, onAdd, onDelete, filter }) {
   const [rows, setRows] = useState(null);
-  useEffect(() => { api('/overview').then(setRows); }, [dataVersion]);
-  if (!rows) return null;
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setRows(null);
+    setError('');
+    api('/overview').then(setRows).catch((err) => setError(err.message || 'Unable to load accounts'));
+  }, [dataVersion]);
+  if (error) return <div className="panel muted">{error}</div>;
+  if (!rows) return <div className="panel muted">Loading accounts…</div>;
 
   const isFunded = filter === 'funded';
   const title = isFunded ? 'Funded Accounts (PA)' : 'Challenges';

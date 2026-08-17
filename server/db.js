@@ -1,4 +1,10 @@
-// SQLite storage — single local file (journal.db in the project root).
+// SQLite storage.
+//
+// LOCAL (dev / LAN): a single file (journal.db in the project root).
+// WEB (Firebase Functions): in-memory database, hydrated from Firestore at
+// boot and flushed back after every write (see firestore-store.js). Keeping
+// SQLite as the working engine means the importer, stats and every route run
+// identically in both modes — Firestore is just durable storage behind it.
 //
 // A JOURNAL = one prop account (e.g. "Apex 50k Eval #3") with its own rules
 // (start balance, trailing drawdown, personal daily loss limit). Fills and
@@ -9,8 +15,9 @@ import Database from 'better-sqlite3';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+const isWeb = process.env.TJ_STORAGE === 'firestore';
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-export const db = new Database(path.join(root, 'journal.db'));
+export const db = new Database(isWeb ? ':memory:' : path.join(root, 'journal.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 

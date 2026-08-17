@@ -212,9 +212,17 @@ function importPerformance(rows, filename, journalId) {
     (journal_id, account, product, contract, direction, qty, entry_time, exit_time,
      entry_price, exit_price, points, pnl, fees, duration_s, source)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'performance')`);
-  const exists = db.prepare(`SELECT 1 FROM trades WHERE source='performance' AND journal_id=?
-    AND account=? AND contract=? AND entry_time=? AND exit_time=? AND pnl=?`);
-  let added = 0, skipped = 0, otherMarkets = 0;
+  // A trade is identified by its CSV signature — times + qty + prices. The fee
+  // setting is deliberately NOT part of the key: performance P&L is stored
+  // gross and fees are subtracted at import, so re-importing the same CSV after
+  // a fee change must RECALCULATE the stored trade, not insert a duplicate.
+  // (Without this, the old pnl-based dedup missed on every fee change and each
+  // trade got imported twice → doubled balances.)
+  const find = db.prepare(`SELECT id FROM trades WHERE source='performance' AND journal_id=?
+    AND account IS ? AND contract=? AND qty=? AND entry_price IS ? AND exit_price IS ?
+    AND entry_time IS ? AND exit_time IS ?`);
+  const update = db.prepare(`UPDATE trades SET direction=?, points=?, pnl=?, fees=?, duration_s=? WHERE id=?`);
+  let added = 0, updated = 0, skipped = 0, otherMarkets = 0;
   const tx = db.transaction(() => {
     for (const row of rows) {
       const contract = String(pick(row, P.symbol) || '').trim().toUpperCase();
@@ -241,15 +249,21 @@ function importPerformance(rows, filename, journalId) {
       const durS = entryTime && exitTime ? Math.max(0, (new Date(exitTime) - new Date(entryTime)) / 1000) : null;
       const account = String(pick(row, P.account) || 'default').trim();
 
-      if (exists.get(journalId, account, contract, entryTime, exitTime, round(pnlRaw - fees))) { skipped++; continue; }
-      insert.run(journalId, account, product, contract, direction, qty, entryTime, exitTime,
-        entryPrice, exitPrice, round(points), round(pnlRaw - fees), round(fees),
-        durS == null ? null : Math.round(durS));
-      added++;
+      const sig = find.get(journalId, account, contract, qty, entryPrice, exitPrice, entryTime, exitTime);
+      if (sig) {
+        update.run(direction, round(points), round(pnlRaw - fees), round(fees),
+          durS == null ? null : Math.round(durS), sig.id);
+        updated++;
+      } else {
+        insert.run(journalId, account, product, contract, direction, qty, entryTime, exitTime,
+          entryPrice, exitPrice, round(points), round(pnlRaw - fees), round(fees),
+          durS == null ? null : Math.round(durS));
+        added++;
+      }
     }
   });
   tx();
-  return { kind: 'performance', fills: 0, trades: added, skipped, otherMarkets };
+  return { kind: 'performance', fills: 0, trades: added, updated, skipped, otherMarkets };
 }
 
 const round = (n) => (n == null ? null : Math.round(n * 100) / 100);

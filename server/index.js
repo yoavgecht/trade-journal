@@ -4,6 +4,7 @@
 // prop account.
 import express from 'express';
 import multer from 'multer';
+import Busboy from 'busboy';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -12,130 +13,149 @@ import { fileURLToPath } from 'node:url';
 import { db, getJournal, productMap } from './db.js';
 import { importCsv } from './importer.js';
 import { summary, equity, patterns, risk, dashboard, challenge, insights, overviewAll, dailyJournal, review, archiveList } from './stats.js';
+import { isWeb, saveShot, deleteShot, deleteVideo, uploadUrl, streamShot, streamVideo } from './media.js';
 
 const app = express();
 app.use(express.json());
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
-const SESSION_DAYS = 14;
 
-function parseCookies(req) {
-  return Object.fromEntries((req.headers.cookie || '').split(';').filter(Boolean).map((part) => {
-    const i = part.indexOf('=');
-    if (i === -1) return [decodeURIComponent(part.trim()), ''];
-    return [decodeURIComponent(part.slice(0, i).trim()), decodeURIComponent(part.slice(i + 1).trim())];
-  }));
+// Multipart uploads on the web: the functions-framework drains the request
+// stream into req.rawBody before Express runs, so multer's busboy sees nothing
+// and req.file ends up empty. Re-parse the buffered body ourselves, exposing
+// the same multer-shaped fields (req.file / req.files / req.body). Local mode
+// (a real HTTP server) keeps using multer normally.
+function webMultipart(field) {
+  return (req, res, next) => {
+    if (!isWeb) return (field === 'files' ? upload.array(field) : upload.single(field))(req, res, next);
+    if (!req.rawBody || !/^multipart\/form-data/i.test(req.headers['content-type'] || '')) {
+      req.body = {};
+      if (field === 'files') req.files = []; else req.file = undefined;
+      return next();
+    }
+    const fields = {};
+    const files = [];
+    const bb = Busboy({
+      headers: { ...req.headers, 'content-length': String(req.rawBody.length) },
+      limits: { fileSize: 20 * 1024 * 1024 },
+    });
+    bb.on('file', (name, stream, info) => {
+      const chunks = [];
+      stream.on('data', (c) => chunks.push(c));
+      stream.on('end', () => files.push({ name, filename: info.filename, mimetype: info.mimeType, buffer: Buffer.concat(chunks) }));
+    });
+    bb.on('field', (name, val) => { fields[name] = val; });
+    bb.on('error', next);
+    bb.on('close', () => {
+      req.body = fields;
+      if (field === 'files') {
+        req.files = files.map((f) => ({ originalname: f.filename, mimetype: f.mimetype, buffer: f.buffer }));
+      } else {
+        const f = files.find((x) => x.name === field);
+        req.file = f ? { originalname: f.filename, mimetype: f.mimetype, buffer: f.buffer } : undefined;
+      }
+      next();
+    });
+    bb.end(req.rawBody);
+  };
 }
 
-function sessionCookie(token) {
-  return [
-    `tj_session=${encodeURIComponent(token)}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    `Max-Age=${SESSION_DAYS * 24 * 60 * 60}`,
-  ].join('; ');
-}
 
-const clearSessionCookie = 'tj_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0';
+// --- Auth -------------------------------------------------------------------
+// Unified Firebase Auth in BOTH modes: the client signs in with Firebase and
+// sends its ID token (Bearer / X-Session-Token) on every /api request. The
+// server verifies it with the Admin SDK (public keys only — works without a
+// service-account file) and uses the UID as the data root. Email/password and
+// session cookies were the pre-Firebase model and are gone.
 const userCount = () => db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
-const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 
-function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
-  const hash = crypto.pbkdf2Sync(String(password), salt, 210000, 32, 'sha256').toString('hex');
-  return { salt, hash };
-}
-
-function validPassword(password, user) {
-  const { hash } = hashPassword(password, user.password_salt);
-  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(user.password_hash, 'hex'));
-}
-
-function createSession(res, userId) {
-  const token = crypto.randomBytes(32).toString('hex');
-  const expires = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  db.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, userId, expires);
-  res.setHeader('Set-Cookie', sessionCookie(token));
-}
-
-function currentUser(req) {
-  const token = parseCookies(req).tj_session;
+// Verified Firebase identity: { uid, email } or null.
+async function currentUser(req) {
+  const h = req.headers.authorization || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7).trim() : req.headers['x-session-token'] || null;
   if (!token) return null;
-  const row = db.prepare(`
-    SELECT u.id, u.email, s.token
-    FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token = ? AND s.expires_at > datetime('now')
-  `).get(token);
-  return row || null;
+  try {
+    const { verifyIdToken } = await import('./firestore-store.js');
+    return await verifyIdToken(token);
+  } catch {
+    return null;
+  }
+}
+
+// The local `users` row is the auth record (email synced from the token).
+function provisionUser(email) {
+  if (userCount() > 0) return;
+  db.prepare('INSERT INTO users (email, password_hash, password_salt) VALUES (?, ?, ?)')
+    .run(email || '', '', '');
 }
 
 function requireAuth(req, res, next) {
-  const user = currentUser(req);
-  if (!user) return res.status(401).json({ error: 'authentication required' });
-  req.user = user;
-  next();
-}
-
-app.get('/api/me', (req, res) => {
-  const user = currentUser(req);
-  res.json({ user: user ? { id: user.id, email: user.email } : null, needsSetup: userCount() === 0 });
-});
-
-app.post('/api/auth/register', (req, res) => {
-  if (userCount() > 0) return res.status(403).json({ error: 'account already exists' });
-  const email = normalizeEmail(req.body?.email);
-  const password = String(req.body?.password || '');
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'valid email required' });
-  if (password.length < 8) return res.status(400).json({ error: 'password must be at least 8 characters' });
-  const { salt, hash } = hashPassword(password);
-  const r = db.prepare('INSERT INTO users (email, password_hash, password_salt) VALUES (?, ?, ?)').run(email, hash, salt);
-  createSession(res, r.lastInsertRowid);
-  res.json({ user: { id: r.lastInsertRowid, email } });
-});
-
-app.post('/api/auth/login', (req, res) => {
-  const email = normalizeEmail(req.body?.email);
-  const password = String(req.body?.password || '');
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-  if (!user || !validPassword(password, user)) return res.status(401).json({ error: 'invalid email or password' });
-  createSession(res, user.id);
-  res.json({ user: { id: user.id, email: user.email } });
-});
-
-app.post('/api/auth/logout', (req, res) => {
-  const token = parseCookies(req).tj_session;
-  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
-  res.setHeader('Set-Cookie', clearSessionCookie);
-  res.json({ ok: true });
-});
-
-app.use('/api', requireAuth);
-
-// Film Room clips can be a few hundred MB, so we STREAM straight to disk (never
-// buffer the whole file in memory) and allow up to 500 MB. Duration is enforced
-// client-side (the browser can read it; the server can't without ffprobe). The
-// filename is derived from the trade id so it's stable and easy to clean up.
-const videosDir = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'videos');
-fs.mkdirSync(videosDir, { recursive: true });
-const uploadVideo = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, videosDir),
-    filename: (req, file, cb) => {
-      const ext = (file.originalname.match(/\.(mp4|mov|webm|m4v|ogg|ogv)$/i)?.[1] || 'mp4').toLowerCase();
-      cb(null, `t${Number(req.params.id)}-${crypto.randomBytes(6).toString('hex')}.${ext}`);
-    },
-  }),
-  fileFilter: (req, file, cb) => cb(null, /^video\//.test(file.mimetype)), // skip non-video, no throw
-  limits: { fileSize: 500 * 1024 * 1024 },
-});
-// Run the upload middleware but turn multer errors (e.g. too big) into clean JSON.
-const runVideoUpload = (req, res, next) =>
-  uploadVideo.single('file')(req, res, (err) => {
-    if (err) {
-      const tooBig = err.code === 'LIMIT_FILE_SIZE';
-      return res.status(tooBig ? 413 : 400).json({ error: tooBig ? 'file too large (max 500 MB)' : 'upload failed' });
+  currentUser(req).then(async (user) => {
+    if (!user) return res.status(401).json({ error: 'authentication required' });
+    req.user = user;
+    provisionUser(user.email);
+    if (isWeb) {
+      const { ensureHydratedFor } = await import('./firestore-store.js');
+      await ensureHydratedFor(user.uid).catch((e) => console.error('[store] hydrate failed:', e));
     }
     next();
   });
+}
+
+app.get('/api/me', async (req, res) => {
+  const user = await currentUser(req);
+  if (user) {
+    provisionUser(user.email);
+    if (isWeb) {
+      const { ensureHydratedFor } = await import('./firestore-store.js');
+      await ensureHydratedFor(user.uid).catch((e) => console.error('[store] hydrate failed:', e));
+    }
+  }
+  res.json({ user: user ? { id: user.uid, email: user.email } : null, needsSetup: userCount() === 0 });
+});
+
+// The client signs in/up with Firebase Auth itself; these routes just validate
+// the resulting ID token so the app (and the users row) is consistent.
+async function handleAuth(req, res) {
+  try {
+    const { verifyIdToken, ensureHydratedFor } = await import('./firestore-store.js');
+    const user = await verifyIdToken(String(req.body?.token || ''));
+    req.user = user;
+    provisionUser(user.email);
+    if (isWeb) await ensureHydratedFor(user.uid).catch(() => {});
+    res.json({ user: { id: user.uid, email: user.email } });
+  } catch {
+    res.status(401).json({ error: 'invalid session' });
+  }
+}
+
+app.post('/api/auth/login', handleAuth);
+app.post('/api/auth/register', handleAuth);
+
+app.post('/api/auth/logout', (_req, res) => res.json({ ok: true })); // client-side Firebase sign-out
+
+app.use('/api', requireAuth);
+
+// WEB mode: after every successful write, flush the in-memory SQLite DB to
+// Firestore so it survives instance recycling (see firestore-store.js). Must be
+// registered before the routes so it runs for every /api request.
+if (isWeb) {
+  const { persistStore } = await import('./firestore-store.js');
+  app.use((req, res, next) => {
+    res.on('finish', () => {
+      if (req.method !== 'GET' && res.statusCode >= 200 && res.statusCode < 400) {
+        persistStore(req.user);
+      }
+    });
+    next();
+  });
+}
+
+
+// Film Room clips can be a few hundred MB. Cloud Functions cap request bodies
+// at ~32 MB, so clips are uploaded DIRECTLY to Storage: the client asks for an
+// upload target (POST /api/uploads/video-start → signed URL on the web, a
+// local PUT endpoint in dev), PUTs the file there, then records it with
+// POST /api/trades/:id/video. Duration is enforced client-side.
 
 // Resolve + validate the journal on every data route.
 function journalId(req, res) {
@@ -253,9 +273,9 @@ app.delete('/api/journals/:id', (req, res) => {
     'SELECT m.video, m.screenshots FROM trade_meta m JOIN trades t ON t.id = m.trade_id WHERE t.journal_id = ?'
   ).all(j.id);
   for (const row of media) {
-    if (row.video) fs.rm(path.join(videosDir, row.video), () => {});
+    if (row.video) deleteVideo(req.user.uid, row.video);
     let shots = []; try { shots = JSON.parse(row.screenshots || '[]'); } catch {}
-    for (const name of shots) fs.rm(path.join(shotsDir, name), () => {});
+    for (const name of shots) deleteShot(req.user.uid, name);
   }
   db.prepare('DELETE FROM journals WHERE id = ?').run(j.id); // cascades remaining trades/meta
   res.json({ ok: true });
@@ -313,7 +333,7 @@ app.post('/api/journals/:id/archive', (req, res) => {
 });
 
 // --- data (journal-scoped) ---------------------------------------------------
-app.post('/api/import', upload.array('files'), (req, res) => {
+app.post('/api/import', webMultipart('files'), (req, res) => {
   const id = Number(req.query?.journal || req.body?.journal);
   if (!id || !getJournal(id)) return res.status(400).json({ error: 'missing or unknown journal' });
   const results = [];
@@ -341,9 +361,9 @@ app.post('/api/journals/:id/reset-trades', (req, res) => {
     "SELECT m.video, m.screenshots FROM trade_meta m JOIN trades t ON t.id = m.trade_id WHERE t.journal_id = ? AND t.source != 'manual'"
   ).all(id);
   for (const row of media) {
-    if (row.video) fs.rm(path.join(videosDir, row.video), () => {});
+    if (row.video) deleteVideo(req.user.uid, row.video);
     let shots = []; try { shots = JSON.parse(row.screenshots || '[]'); } catch {}
-    for (const name of shots) fs.rm(path.join(shotsDir, name), () => {});
+    for (const name of shots) deleteShot(req.user.uid, name);
   }
   db.transaction(() => {
     db.prepare('DELETE FROM fills WHERE journal_id = ?').run(id);
@@ -460,8 +480,8 @@ app.delete('/api/trades/:id', (req, res) => {
   if (t.source !== 'manual') return res.status(400).json({ error: 'only manual trades can be deleted' });
   const meta = db.prepare('SELECT screenshots, video FROM trade_meta WHERE trade_id = ?').get(id);
   const shots = (() => { try { return JSON.parse(meta?.screenshots || '[]'); } catch { return []; } })();
-  for (const name of shots) fs.rm(path.join(shotsDir, name), () => {});
-  if (meta?.video) fs.rm(path.join(videosDir, meta.video), () => {});
+  for (const name of shots) deleteShot(req.user.uid, name);
+  if (meta?.video) deleteVideo(req.user.uid, meta.video);
   db.prepare('DELETE FROM trades WHERE id = ?').run(id); // cascades trade_meta
   res.json({ ok: true });
 });
@@ -514,10 +534,10 @@ app.patch('/api/trades/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// --- trade screenshots (max 2 per trade; files live in screenshots/) ---------
-const shotsDir = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'screenshots');
-fs.mkdirSync(shotsDir, { recursive: true });
-app.use('/api/screenshots', express.static(shotsDir));
+// --- trade screenshots (max 2 per trade; files served on demand) ------------
+app.get('/api/screenshots/:name', (req, res) => {
+  streamShot(req, res, req.user.uid, req.params.name).catch(() => res.status(404).end());
+});
 
 const getShots = (tradeId) => {
   const row = db.prepare('SELECT screenshots FROM trade_meta WHERE trade_id = ?').get(tradeId);
@@ -530,7 +550,7 @@ const setShots = (tradeId, shots) => {
   `).run(tradeId, JSON.stringify(shots));
 };
 
-app.post('/api/trades/:id/screenshots', upload.array('files'), (req, res) => {
+app.post('/api/trades/:id/screenshots', webMultipart('files'), async (req, res) => {
   const id = Number(req.params.id);
   if (!db.prepare('SELECT 1 FROM trades WHERE id = ?').get(id)) return res.status(404).json({ error: 'no such trade' });
   const shots = getShots(id);
@@ -540,25 +560,27 @@ app.post('/api/trades/:id/screenshots', upload.array('files'), (req, res) => {
     if (!/^image\//.test(f.mimetype)) { rejected++; continue; }
     const ext = (f.originalname.match(/\.(png|jpe?g|gif|webp)$/i)?.[1] || 'png').toLowerCase();
     const name = `t${id}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
-    fs.writeFileSync(path.join(shotsDir, name), f.buffer);
+    await saveShot(req.user.uid, name, f.buffer);
     shots.push(name);
   }
   setShots(id, shots);
   res.json({ screenshots: shots, rejected });
 });
 
-app.delete('/api/trades/:id/screenshots/:name', (req, res) => {
+app.delete('/api/trades/:id/screenshots/:name', async (req, res) => {
   const id = Number(req.params.id);
   const shots = getShots(id);
   const name = req.params.name;
   if (!shots.includes(name)) return res.status(404).json({ error: 'no such screenshot' });
   setShots(id, shots.filter((s) => s !== name));
-  fs.rm(path.join(shotsDir, name), () => {});
+  await deleteShot(req.user.uid, name);
   res.json({ screenshots: shots.filter((s) => s !== name) });
 });
 
-// --- Film Room video (one clip per trade; files live in videos/) --------------
-app.use('/api/videos', express.static(videosDir));
+// --- Film Room video (one clip per trade; served on demand) ------------------
+app.get('/api/videos/:name', (req, res) => {
+  streamVideo(req, res, req.user.uid, req.params.name).catch(() => res.status(404).end());
+});
 
 const getVideo = (tradeId) =>
   db.prepare('SELECT video FROM trade_meta WHERE trade_id = ?').get(tradeId)?.video || null;
@@ -569,26 +591,52 @@ const setVideo = (tradeId, name) => {
   `).run(tradeId, name);
 };
 
-// One clip per trade — replaces any existing. Video files only (streamed to disk).
-app.post('/api/trades/:id/video', runVideoUpload, (req, res) => {
-  const id = Number(req.params.id);
-  const f = req.file;
-  if (!f) return res.status(400).json({ error: 'video file required' });
-  // File is already on disk; if the trade is bogus, drop it and bail.
-  if (!db.prepare('SELECT 1 FROM trades WHERE id = ?').get(id)) {
-    fs.rm(path.join(videosDir, f.filename), () => {});
+// Ask for an upload target for a new clip. Web → short-lived signed Storage
+// URL; dev → the local PUT endpoint. The client PUTs the bytes there (straight
+// to the bucket on the web — Cloud Functions can't take a 500 MB body), then
+// records the filename with POST /api/trades/:id/video.
+app.post('/api/uploads/video-start', async (req, res) => {
+  const id = Number(req.body?.tradeId);
+  if (!id || !db.prepare('SELECT 1 FROM trades WHERE id = ?').get(id)) {
     return res.status(404).json({ error: 'no such trade' });
   }
-  const prev = getVideo(id);
-  if (prev && prev !== f.filename) fs.rm(path.join(videosDir, prev), () => {});
-  setVideo(id, f.filename);
-  res.json({ video: f.filename });
+  const ext = (String(req.body?.ext || '').match(/^[a-z0-9]{1,5}$/i)?.[0] || 'mp4').toLowerCase();
+  const filename = `t${id}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
+  res.json({ filename, url: await uploadUrl(req.user.uid, filename) });
 });
 
-app.delete('/api/trades/:id/video', (req, res) => {
+// Dev-mode target for uploadUrl(): the browser PUTs the clip body here and we
+// stream it to disk. On the web this endpoint is never called (the PUT goes to
+// Storage directly).
+app.put('/api/uploads/local/:name', (req, res) => {
+  if (isWeb) return res.status(404).end();
+  const name = req.params.name;
+  if (!/^t\d+-[0-9a-f]{12}\.[a-z0-9]{1,5}$/i.test(name)) return res.status(400).json({ error: 'bad filename' });
+  const target = path.join(process.cwd(), 'videos', name);
+  const ws = fs.createWriteStream(target);
+  ws.on('error', () => res.status(500).end());
+  ws.on('finish', () => res.json({ ok: true }));
+  req.on('aborted', () => ws.destroy());
+  req.pipe(ws);
+});
+
+// Record (or replace) the clip. Client uploaded the file first; we only store
+// the filename and drop any previous clip.
+app.post('/api/trades/:id/video', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.prepare('SELECT 1 FROM trades WHERE id = ?').get(id)) return res.status(404).json({ error: 'no such trade' });
+  const name = String(req.body?.video || '');
+  if (!/^t\d+-[0-9a-f]{12}\.[a-z0-9]{1,5}$/i.test(name)) return res.status(400).json({ error: 'bad filename' });
+  const prev = getVideo(id);
+  if (prev && prev !== name) deleteVideo(req.user.uid, prev);
+  setVideo(id, name);
+  res.json({ video: name });
+});
+
+app.delete('/api/trades/:id/video', async (req, res) => {
   const id = Number(req.params.id);
   const prev = getVideo(id);
-  if (prev) fs.rm(path.join(videosDir, prev), () => {});
+  if (prev) await deleteVideo(req.user.uid, prev);
   setVideo(id, null);
   res.json({ video: null });
 });
@@ -600,11 +648,11 @@ app.get('/api/library', (_req, res) => {
   res.json(db.prepare('SELECT * FROM library_items ORDER BY created_at DESC, id DESC').all());
 });
 
-app.post('/api/library', upload.single('file'), (req, res) => {
+app.post('/api/library', webMultipart('file'), async (req, res) => {
   if (!req.file || !/^image\//.test(req.file.mimetype)) return res.status(400).json({ error: 'image file required' });
   const ext = (req.file.originalname.match(/\.(png|jpe?g|gif|webp)$/i)?.[1] || 'png').toLowerCase();
   const filename = `lib-${crypto.randomBytes(8).toString('hex')}.${ext}`;
-  fs.writeFileSync(path.join(shotsDir, filename), req.file.buffer);
+  await saveShot(req.user.uid, filename, req.file.buffer);
   const { category = null, title = null, note = null } = req.body || {};
   const blank = (v) => (v == null || v === '' ? null : String(v));
   const r = db.prepare('INSERT INTO library_items (category, title, note, filename) VALUES (?, ?, ?, ?)')
@@ -623,11 +671,11 @@ app.patch('/api/library/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM library_items WHERE id = ?').get(id));
 });
 
-app.delete('/api/library/:id', (req, res) => {
+app.delete('/api/library/:id', async (req, res) => {
   const id = Number(req.params.id);
   const row = db.prepare('SELECT filename FROM library_items WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ error: 'no such item' });
-  fs.rm(path.join(shotsDir, row.filename), () => {});
+  await deleteShot(req.user.uid, row.filename);
   db.prepare('DELETE FROM library_items WHERE id = ?').run(id);
   res.json({ ok: true });
 });
@@ -710,15 +758,21 @@ if (process.env.NODE_ENV === 'production') {
 const PORT = 5175;
 // Bind to 0.0.0.0 so it's reachable from your phone on the same Wi-Fi. In DEV you
 // open Vite's Network URL (:5173, which proxies /api here); in production-serve
-// (npm run build && npm start) you open this server directly at :5175.
+// (npm run build && npm start) you open this server directly at :5175. In WEB
+// mode (Firebase Functions) the app is exported instead of listening.
 function lanIp() {
   for (const ifaces of Object.values(os.networkInterfaces())) {
     for (const i of ifaces || []) if (i.family === 'IPv4' && !i.internal) return i.address;
   }
   return null;
 }
-app.listen(PORT, '0.0.0.0', () => {
-  const ip = lanIp();
-  console.log(`journal api on http://localhost:${PORT}`);
-  if (ip) console.log(`  ↳ LAN (phone, production-serve): http://${ip}:${PORT}`);
-});
+
+export default app;
+
+if (!isWeb) {
+  app.listen(PORT, '0.0.0.0', () => {
+    const ip = lanIp();
+    console.log(`journal api on http://localhost:${PORT}`);
+    if (ip) console.log(`  ↳ LAN (phone, production-serve): http://${ip}:${PORT}`);
+  });
+}

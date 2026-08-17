@@ -1,16 +1,29 @@
+import { getAuthToken } from './firebase-auth.js';
+
 // Active journal is module-level so every data call is scoped automatically.
 let activeJournal = null;
 export function setActiveJournalId(id) { activeJournal = id; }
 export function getActiveJournalId() { return activeJournal; }
 
 export async function api(path, opts = {}) {
-  let url = `/api${path}`;
+  const apiBase = (import.meta?.env?.VITE_API_URL || '').replace(/\/$/, '');
+  let url = `${apiBase || ''}/api${path}`;
   const needsScope = activeJournal && !path.startsWith('/journals') && !path.startsWith('/products');
   if (needsScope) url += (url.includes('?') ? '&' : '?') + `journal=${activeJournal}`;
+
+  let sessionToken = null;
+  try { sessionToken = await getAuthToken(); } catch {}
+
+  const headers = {
+    ...(opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+    ...(sessionToken ? { Authorization: `Bearer ${sessionToken}`, 'X-Session-Token': sessionToken } : {}),
+    ...(opts.headers || {}),
+  };
+
   const res = await fetch(url, {
-    credentials: 'same-origin',
-    headers: opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : undefined,
+    credentials: apiBase ? 'include' : 'same-origin',
     ...opts,
+    headers,
     body: opts.body instanceof FormData ? opts.body : opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);

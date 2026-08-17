@@ -128,10 +128,15 @@ export default function TradePanel({ trade, onClose, onSaved }) {
     }
     setVideoBusy(true);
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const r = await api(`/trades/${trade.id}/video`, { method: 'POST', body: fd });
-      setVideo(r.video);
+      const ext = (file.name.match(/\.(mp4|mov|webm|m4v|ogg|ogv)$/i)?.[1] || 'mp4').toLowerCase();
+      // Ask the server for an upload target: a signed Storage URL on the web
+      // (clips can be 500 MB — too big for a Cloud Function body), a local
+      // PUT endpoint in dev. Either way: PUT the bytes, then record the name.
+      const { filename, url } = await api('/uploads/video-start', { method: 'POST', body: { tradeId: trade.id, ext } });
+      const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': file.type || 'video/mp4' }, body: file });
+      if (!res.ok) throw new Error(`upload failed (${res.status})`);
+      await api(`/trades/${trade.id}/video`, { method: 'POST', body: { video: filename } });
+      setVideo(filename);
       onSaved();
     } catch (e) {
       alert('Upload failed: ' + (e.message || 'error'));

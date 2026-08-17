@@ -17,6 +17,15 @@ import Settings from './pages/Settings.jsx';
 import { api, setActiveJournalId } from './api.js';
 import { PRESETS, accountPrefix } from './presets.js';
 import Dropdown from './components/Dropdown.jsx';
+import UserBar from './components/UserBar.jsx';
+import {
+  authenticate,
+  authenticateWithGoogle,
+  onAuthSessionChanged,
+  requestPasswordReset,
+  resendVerificationEmail,
+  signOutSession,
+} from './firebase-auth.js';
 
 const money0 = (n) => `$${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
@@ -57,6 +66,7 @@ function CreateJournalModal({ onCreated, onClose, blocking, initialPhase }) {
   const [r, setR] = useState({ ...PRESETS[defaultKey] });
   const [cost, setCost] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   const applyPreset = (key) => { setPresetKey(key); setR({ ...PRESETS[key] }); };
   const set = (k, v) => setR((cur) => ({ ...cur, [k]: v }));
@@ -71,9 +81,15 @@ function CreateJournalModal({ onCreated, onClose, blocking, initialPhase }) {
   const create = async () => {
     if (!canCreate) return;
     setBusy(true);
-    const j = await api('/journals', { method: 'POST', body: { name: finalName, cost: Number(cost) || 0, ...r } });
-    setBusy(false);
-    onCreated(j);
+    setError('');
+    try {
+      const j = await api('/journals', { method: 'POST', body: { name: finalName, cost: Number(cost) || 0, ...r } });
+      await onCreated(j);
+    } catch (err) {
+      setError(err.message || 'Failed to create challenge');
+    } finally {
+      setBusy(false);
+    }
   };
 
   // Read-only rule rows derived from the chosen preset (the firm defines these).
@@ -176,6 +192,8 @@ function CreateJournalModal({ onCreated, onClose, blocking, initialPhase }) {
           </div>
         )}
 
+        {error && <div className="error-message" style={{ marginTop: 10, color: '#c0392b' }}>{error}</div>}
+
         <div className="row" style={{ marginTop: 14 }}>
           <button onClick={create} disabled={busy || !canCreate}>Create {isFunded ? 'Funded Account' : 'Challenge'}</button>
           {!blocking && <button className="ghost" onClick={onClose}>Cancel</button>}
@@ -240,7 +258,7 @@ function ImportModal({ onImported, onClose }) {
             {results.map((r, i) => (
               <div key={i} className={r.error ? 'neg' : ''}>
                 {r.error ? `${r.file}: ${r.error}`
-                  : `${r.file}: ${r.kind === 'performance' ? `${r.trades} trades` : `${r.fills} fills → ${r.trades} trades`}${r.skipped ? `, ${r.skipped} dupes/skipped` : ''}${r.otherMarkets ? `, ${r.otherMarkets} non-NQ/ES ignored` : ''}`}
+                  : `${r.file}: ${r.kind === 'performance' ? `${r.trades} trades` : `${r.fills} fills → ${r.trades} trades`}${r.updated ? `, ${r.updated} recalculated` : ''}${r.skipped ? `, ${r.skipped} dupes/skipped` : ''}${r.otherMarkets ? `, ${r.otherMarkets} non-NQ/ES ignored` : ''}`}
               </div>
             ))}
             <div className="row" style={{ marginTop: 12 }}>
@@ -254,25 +272,62 @@ function ImportModal({ onImported, onClose }) {
 }
 
 function AuthScreen({ needsSetup, onAuthed }) {
+  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const mode = needsSetup ? 'register' : 'login';
+  const [message, setMessage] = useState('');
+  const [mode, setMode] = useState(needsSetup ? 'register' : 'login');
+
+  useEffect(() => {
+    setMode(needsSetup ? 'register' : 'login');
+  }, [needsSetup]);
+
+  const switchMode = (next) => {
+    setMode(next);
+    setError('');
+    setMessage('');
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
     setError('');
+    setMessage('');
     try {
-      const { user } = await api(`/auth/${mode}`, { method: 'POST', body: { email, password } });
-      onAuthed(user);
+      if (mode === 'reset') {
+        await requestPasswordReset(email);
+        setMessage('Password reset email sent.');
+      } else {
+        const { user, verificationSent } = await authenticate(mode, email, password, displayName);
+        if (verificationSent) setMessage('Verification email sent.');
+        onAuthed(user);
+      }
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Unable to sign in right now.');
     } finally {
       setBusy(false);
     }
   };
+
+  const google = async () => {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const { user } = await authenticateWithGoogle();
+      onAuthed(user);
+    } catch (err) {
+      setError(err.message || 'Unable to sign in with Google.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const title = mode === 'register' ? 'Create your login'
+    : mode === 'reset' ? 'Reset password'
+    : 'Sign in';
 
   return (
     <div className="auth-shell">
@@ -283,21 +338,44 @@ function AuthScreen({ needsSetup, onAuthed }) {
           </svg>
           <span>Trade Journal</span>
         </div>
-        <h1>{needsSetup ? 'Create your login' : 'Sign in'}</h1>
+        <h1>{title}</h1>
+        {mode === 'register' && (
+          <div className="field">
+            <label>Username</label>
+            <input autoComplete="username" value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)} placeholder="e.g. trader_apex" required />
+          </div>
+        )}
         <div className="field">
           <label>Email</label>
           <input type="email" autoFocus autoComplete="email" value={email}
             onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
         </div>
-        <div className="field">
-          <label>Password</label>
-          <input type="password" autoComplete={needsSetup ? 'new-password' : 'current-password'} value={password}
-            onChange={(e) => setPassword(e.target.value)} placeholder={needsSetup ? 'At least 8 characters' : 'Password'} />
-        </div>
+        {mode !== 'reset' && (
+          <div className="field">
+            <label>Password</label>
+            <input type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} value={password}
+              onChange={(e) => setPassword(e.target.value)} placeholder={mode === 'register' ? 'At least 8 characters' : 'Password'} />
+          </div>
+        )}
+        {message && <div className="auth-message">{message}</div>}
         {error && <div className="auth-error">{error}</div>}
-        <button className="auth-submit" disabled={busy || !email.trim() || password.length < 1}>
-          {busy ? 'Please wait...' : needsSetup ? 'Create account' : 'Sign in'}
+        <button className="auth-submit" disabled={busy || !email.trim() || (mode !== 'reset' && password.length < 1) || (mode === 'register' && !displayName.trim())}>
+          {busy ? 'Please wait...' : mode === 'register' ? 'Create account' : mode === 'reset' ? 'Send reset email' : 'Sign in'}
         </button>
+        {mode !== 'reset' && (
+          <button type="button" className="auth-submit ghost-auth" onClick={google} disabled={busy}>
+            Continue with Google
+          </button>
+        )}
+        <button type="button" className="auth-link" onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
+          {mode === 'login' ? 'Sign up' : 'Already have an account? Sign in'}
+        </button>
+        {mode !== 'reset' && (
+          <button type="button" className="auth-link" onClick={() => switchMode('reset')}>
+            Forgot password?
+          </button>
+        )}
       </form>
     </div>
   );
@@ -309,9 +387,11 @@ export default function App() {
   const [activeId, setActiveId] = useState(null);
   const [dataVersion, setDataVersion] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
+  const [createType, setCreateType] = useState('eval');
   const [showImport, setShowImport] = useState(false);
   const [balance, setBalance] = useState(null);
   const [viewingArchived, setViewingArchived] = useState(null); // an archived acct opened for viewing
+  const [authMessage, setAuthMessage] = useState('');
   // Light / dark theme — initial value comes from the pre-paint script in index.html.
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'dark');
   useEffect(() => {
@@ -322,8 +402,30 @@ export default function App() {
   const location = useLocation();
 
   useEffect(() => {
-    api('/me').then(setAuth).catch(() => setAuth({ user: null, needsSetup: true }));
+    let cancelled = false;
+    const unsub = onAuthSessionChanged((firebaseUser) => {
+      if (cancelled) return;
+      if (!firebaseUser) {
+        setAuth({ user: null, needsSetup: false });
+        setJournals(null);
+        setActiveId(null);
+        setActiveJournalId(null);
+        setBalance(null);
+        return;
+      }
+      api('/me').then((me) => {
+        if (!cancelled) setAuth({ ...me, user: { ...firebaseUser, ...(me.user || {}) } });
+      }).catch(() => {
+        if (!cancelled) setAuth({ user: firebaseUser, needsSetup: false });
+      });
+    });
+    return () => { cancelled = true; unsub(); };
   }, []);
+
+  const openCreateModal = (phase = 'eval') => {
+    setCreateType(phase);
+    setShowCreate(true);
+  };
 
   // Open an archived (passed/blown) account for read-only viewing — its data
   // isn't in the active `journals` list, so keep the object around to resolve
@@ -335,30 +437,44 @@ export default function App() {
   useEffect(() => {
     if (!auth?.user) return;
     api('/journals').then((js) => {
-      setJournals(js);
+      setJournals(js || []);
       // After a pass, land on the freshly-created funded account (set by Challenge).
       const pending = Number(localStorage.getItem('pendingActive'));
       localStorage.removeItem('pendingActive');
       const pendingJ = pending ? js.find((j) => j.id === pending) : null;
-      const byImport = [...js].filter((j) => j.last_import_at)
+      const byImport = [...(js || [])].filter((j) => j.last_import_at)
         .sort((a, b) => b.last_import_at.localeCompare(a.last_import_at))[0];
-      const saved = js.find((j) => j.id === Number(localStorage.getItem('activeJournal')));
+      const saved = (js || []).find((j) => j.id === Number(localStorage.getItem('activeJournal')));
       // Persist the account you were on across refreshes: the last-selected
       // account wins, so a refresh keeps you where you were (only fall back to
       // the most-recently-imported / first account on a brand-new session).
-      const pick = pendingJ || saved || byImport || js[0];
+      const pick = pendingJ || saved || byImport || (js || [])[0];
       if (pick) selectJournal(pick.id);
+    }).catch(() => {
+      setJournals([]);
+      setActiveId(null);
+      setActiveJournalId(null);
     });
   }, [auth?.user]);
 
   const logout = async () => {
-    await api('/auth/logout', { method: 'POST' }).catch(() => {});
+    await signOutSession().catch(() => {});
     setAuth((cur) => ({ user: null, needsSetup: cur?.needsSetup || false }));
     setJournals(null);
     setActiveId(null);
     setActiveJournalId(null);
     setBalance(null);
     navigate('/');
+  };
+
+  const sendVerification = async () => {
+    setAuthMessage('');
+    try {
+      await resendVerificationEmail();
+      setAuthMessage('Verification email sent.');
+    } catch (err) {
+      setAuthMessage(err.message || 'Unable to send verification email.');
+    }
   };
 
   // Delete an account (with its data); reassign active if it was the open one.
@@ -368,10 +484,12 @@ export default function App() {
     setViewingArchived((v) => (v && v.id === a.id ? null : v));
     const js = await api('/journals');
     setJournals(js);
+    // Always refresh every tab (Challenges/Funded/Archive) — including when the
+    // deleted account was the active one and no other active account remains.
+    // Without this, the deleted card would stay on screen until a manual refresh.
+    setDataVersion((v) => v + 1);
     if (a.id === activeId) {
       if (js[0]) selectJournal(js[0].id); else { setActiveId(null); setActiveJournalId(null); }
-    } else {
-      setDataVersion((v) => v + 1);
     }
     return true;
   };
@@ -404,7 +522,7 @@ export default function App() {
     || (viewingArchived && viewingArchived.id === activeId ? viewingArchived : null);
   const needsFirstJournal = journals.length === 0;
   const showWelcome = location.pathname === '/' && needsFirstJournal;
-  const requiresActive = ['/','/challenge','/analytics','/settings'];
+  const requiresActive = ['/', '/challenge', '/analytics', '/settings'];
   const showRoutes = !!active || !requiresActive.includes(location.pathname);
 
   return (
@@ -444,19 +562,26 @@ export default function App() {
           <span className={`ts-track ${theme}`}><span className="ts-knob" /></span>
           <span className={`ts-label ${theme === 'light' ? 'on' : ''}`}>LIGHT</span>
         </div>
-        <button className="logout-btn" onClick={logout}>Sign out</button>
+        <UserBar onLogout={logout} />
       </aside>
       <main className="main">
-        {showWelcome && <Welcome onCreate={(phase) => setShowCreate(phase)} />}
+        {auth.user && auth.user.emailVerified === false && (
+          <div className="auth-inline">
+            <span>Verify your email to keep account recovery secure.</span>
+            <button type="button" onClick={sendVerification}>Send email</button>
+            {authMessage && <b>{authMessage}</b>}
+          </div>
+        )}
+        {showWelcome && <Welcome onCreate={openCreateModal} />}
         {showRoutes && (
           <Routes>
-            <Route path="/" element={active ? <Overview dataVersion={dataVersion} journal={active} onOpenImport={() => setShowImport(true)} onDataChanged={() => setDataVersion((v) => v + 1)} onJournalPatched={patchJournalLocal} /> : <Welcome onCreate={(phase) => setShowCreate(phase)} />} />
+            <Route path="/" element={active ? <Overview dataVersion={dataVersion} journal={active} onOpenImport={() => setShowImport(true)} onDataChanged={() => setDataVersion((v) => v + 1)} onJournalPatched={patchJournalLocal} /> : <Welcome onCreate={openCreateModal} />} />
             <Route path="/journal" element={<Journal dataVersion={dataVersion} />} />
             <Route path="/challenges" element={<Portfolio dataVersion={dataVersion} filter="eval"
-              onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} onDelete={removeJournal} />} />
+              onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={openCreateModal} onDelete={removeJournal} />} />
             <Route path="/funded" element={<Portfolio dataVersion={dataVersion} filter="funded"
-              onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={(phase) => setShowCreate(phase)} onDelete={removeJournal} />} />
-            <Route path="/challenge" element={active ? <Challenge dataVersion={dataVersion} journal={active} /> : <div className="panel muted">Select an account to view challenge details.</div>} />
+              onOpen={(id) => { selectJournal(id); navigate('/'); }} onAdd={openCreateModal} onDelete={removeJournal} />} />
+            <Route path="/challenge" element={active ? <Challenge dataVersion={dataVersion} journal={active} /> : <div className="panel muted" style={{ textAlign: 'center', padding: 40 }}><p style={{ marginBottom: 16 }}>Select an account to view challenge details.</p><button onClick={() => openCreateModal('eval')}>+ Create Challenge</button></div>} />
             <Route path="/analytics" element={active ? <Analytics dataVersion={dataVersion} journal={active} /> : <div className="panel muted">Select an account to view analytics.</div>} />
             <Route path="/patterns" element={<Patterns dataVersion={dataVersion} />} />
             <Route path="/review" element={<Review dataVersion={dataVersion} />} />
@@ -472,6 +597,7 @@ export default function App() {
               setJournals(js);
               if (!js.find((j) => j.id === activeId)) {
                 if (js[0]) selectJournal(js[0].id); else { setActiveId(null); setActiveJournalId(null); }
+                setDataVersion((v) => v + 1);
               }
             }} /> : <div className="panel muted">Select an account to view settings.</div>} />
           </Routes>
@@ -480,11 +606,17 @@ export default function App() {
 
       {showCreate && (
         <CreateJournalModal
-          initialPhase={typeof showCreate === 'string' ? showCreate : 'eval'}
+          initialPhase={createType}
           onClose={() => setShowCreate(false)}
           onCreated={async (j) => {
-            const js = await api('/journals');
-            setJournals(js);
+            try {
+              const js = await api('/journals');
+              setJournals(js);
+            } catch (e) {
+              // If refreshing the list fails (e.g. auth glitch), still add the
+              // new journal locally so the user can proceed.
+              setJournals((prev) => (prev ? [...prev, j] : [j]));
+            }
             setShowCreate(false);
             selectJournal(j.id);
             navigate('/');
