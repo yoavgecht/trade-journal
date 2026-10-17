@@ -57,7 +57,8 @@ async function writeUserProfile(firebaseUser) {
     userId: docId,
     uid: firebaseUser.uid,
     authUid: firebaseUser.uid,
-    createdAt: serverTimestamp(),
+    // createdAt is set once by the beforeUserCreated function — never resend it
+    // here (merge would overwrite it on every sign-in).
     source: 'web',
     updatedAt: serverTimestamp(),
   }, { merge: true });
@@ -73,7 +74,8 @@ function persistSession(user) {
       displayName: user.displayName || '',
       photoURL: user.photoURL || '',
       emailVerified: !!user.emailVerified,
-      token: user.token || null,
+      // No ID token here: Firebase keeps its own session; api.js asks it for a
+      // fresh token per request.
     }));
   } catch {}
 }
@@ -210,8 +212,7 @@ export function onAuthSessionChanged(callback) {
       const token = await firebaseUser.getIdToken();
       const user = authUserPayload(firebaseUser, token);
       persistSession(user);
-      try { await writeUserProfile(firebaseUser); } catch {}
-      callback(user);
+      callback(user); // profile is written on sign-in/register, not on every load
     } catch {
       callback(null);
     }
@@ -219,6 +220,10 @@ export function onAuthSessionChanged(callback) {
 }
 
 export async function signOutSession() {
+  const apiBase = (import.meta?.env?.VITE_API_URL || '').replace(/\/$/, '');
+  try {
+    await fetch(`${apiBase || ''}/api/auth/logout`, { method: 'POST', credentials: apiBase ? 'include' : 'same-origin' });
+  } catch {}
   try {
     await fbSignOut(auth);
   } catch {}

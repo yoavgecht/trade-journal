@@ -173,7 +173,12 @@ async function handleAuth(req, res) {
 app.post('/api/auth/login', handleAuth);
 app.post('/api/auth/register', handleAuth);
 
-app.post('/api/auth/logout', (_req, res) => res.json({ ok: true })); // client-side Firebase sign-out
+// Firebase sign-out happens client-side; this drops the media session cookie so
+// the browser stops carrying a valid token after logout.
+app.post('/api/auth/logout', (_req, res) => {
+  res.clearCookie(SESSION_COOKIE, { path: '/api', httpOnly: true, sameSite: 'lax', secure: isWeb });
+  res.json({ ok: true });
+});
 
 app.use('/api', requireAuth);
 
