@@ -33,13 +33,26 @@ export async function api(path, opts = {}) {
 export const fmt = (n, opts = {}) =>
   n == null ? '—' : n.toLocaleString('en-US', { maximumFractionDigits: 2, ...opts });
 
-// Trade times are stored as bare wall-clock strings in the browser's local
-// timezone (no TZ suffix). Charts show exchange (New York) time, so format
-// them for display as NY time — DST-aware via Intl.
-const nyTimeFmt = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+// Every stored time is ALREADY New York wall-clock ("YYYY-MM-DDTHH:MM:SS", no
+// zone — the server converts imports, see server/time.js). So hours/dates are
+// read straight off the string; never re-convert from the browser's zone.
+export const fmtNY = (iso) => (iso ? String(iso).slice(11, 16) : '—');
+
+const nyWallFmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 });
-export const fmtNY = (iso) => (iso ? nyTimeFmt.format(new Date(iso)) : '—');
+// "YYYY-MM-DDTHH:MM" for now in New York (datetime-local inputs, defaults).
+export function nyNow() {
+  const o = {};
+  for (const p of nyWallFmt.formatToParts(new Date())) o[p.type] = p.value;
+  return `${o.year}-${o.month}-${o.day}T${o.hour}:${o.minute}`;
+}
+export const nyToday = () => nyNow().slice(0, 10);
+
+// The browser's time zone — sent with CSV imports so the server can convert
+// the export's local times to New York.
+export const browserTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 // Resolve a media filename to a browser-loadable URL (signed Storage URL on the
 // web, static local path in dev). <img>/<video> tags can't attach Authorization

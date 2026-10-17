@@ -14,7 +14,7 @@ import Expenses from './pages/Expenses.jsx';
 import Payouts from './pages/Payouts.jsx';
 import Welcome from './pages/Welcome.jsx';
 import Settings from './pages/Settings.jsx';
-import { api, setActiveJournalId } from './api.js';
+import { api, setActiveJournalId, browserTz } from './api.js';
 import { PRESETS, accountPrefix } from './presets.js';
 import Dropdown from './components/Dropdown.jsx';
 import UserBar from './components/UserBar.jsx';
@@ -215,6 +215,8 @@ function ImportModal({ onImported, onClose }) {
     setBusy(true);
     const fd = new FormData();
     for (const f of files) fd.append('files', f);
+    // The export's times are in this browser's zone; the server converts to NY.
+    fd.append('tz', browserTz());
     try {
       const { results } = await api('/import', { method: 'POST', body: fd });
       onImported();

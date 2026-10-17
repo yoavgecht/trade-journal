@@ -43,7 +43,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { db, runAsUser, applyFirmFeeDefaults } from './db.js';
+import { db, runAsUser, applyFirmFeeDefaults, migrateTimesToNY } from './db.js';
 import { risk as statsRisk } from './stats.js';
 
 const PROJECT_ID = process.env.GCP_PROJECT || 'trade-journal-d7e7a';
@@ -220,6 +220,7 @@ export async function hydrateStore(uid) {
   db.transaction(() => {
     for (const [table, row] of pending) insert(table, row);
     applyFirmFeeDefaults(); // one-time firm fee defaults for older accounts
+    migrateTimesToNY(); // one-time: older accounts' times → New York
   })();
   console.log(`[store] hydrated ${pending.length} rows from ${root}`);
 }

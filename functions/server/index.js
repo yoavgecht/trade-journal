@@ -10,8 +10,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, getJournal, productMap, runAsUser, firmFees, repriceTrades, applyFirmFeeDefaults, FEE_COLS, FEE_DEFAULTS_VERSION } from './db.js';
+import { db, getJournal, productMap, runAsUser, firmFees, repriceTrades, applyFirmFeeDefaults, migrateTimesToNY, FEE_COLS, FEE_DEFAULTS_VERSION } from './db.js';
 import { importCsv } from './importer.js';
+import { wallAt, nyToday } from './time.js';
 import { summary, equity, patterns, risk, dashboard, challenge, insights, overviewAll, dailyJournal, review, archiveList } from './stats.js';
 import { isWeb, saveShot, deleteShot, deleteVideo, uploadUrl, streamShot, streamVideo, shotsDir, videosDir } from './media.js';
 
@@ -283,11 +284,11 @@ app.post('/api/journals', (req, res) => {
     (name, start_balance, trailing_dd, daily_loss_limit, dd_stops_at_start, deposit_date,
      firm, phase, profit_target, consistency_pct, consistency_cushion_pct, min_profit_days, min_profit_day_amount, max_contracts,
      min_payout, payout_cap, max_payouts, default_risk, dd_stop_mode, dd_buffer, cost,
-     fee_nq, fee_es, fee_mnq, fee_mes, fee_defaults_applied)
+     fee_nq, fee_es, fee_mnq, fee_mes, fee_defaults_applied, times_tz)
     VALUES (@name, @start_balance, @trailing_dd, @daily_loss_limit, @dd_stops_at_start, @deposit_date,
      @firm, @phase, @profit_target, @consistency_pct, @consistency_cushion_pct, @min_profit_days, @min_profit_day_amount, @max_contracts,
      @min_payout, @payout_cap, @max_payouts, @default_risk, @dd_stop_mode, @dd_buffer, @cost,
-     @fee_nq, @fee_es, @fee_mnq, @fee_mes, @fee_defaults_applied)`).run({
+     @fee_nq, @fee_es, @fee_mnq, @fee_mes, @fee_defaults_applied, 'America/New_York')`).run({
     // Fees default from the firm (Lucid 3.50, Apex 4.28, every contract) unless given.
     ...Object.fromEntries(Object.values(FEE_COLS).map((c) => [c,
       b[c] != null && b[c] !== '' ? Number(b[c]) : firmFees(b.firm)[c]])),
@@ -409,7 +410,7 @@ app.post('/api/journals/:id/archive', (req, res) => {
       trailing_dd: fr.trailing_dd ?? j.trailing_dd,
       daily_loss_limit: fr.daily_loss_limit ?? j.daily_loss_limit,
       dd_stops_at_start: j.dd_stops_at_start,
-      deposit_date: new Date().toISOString().slice(0, 10),
+      deposit_date: nyToday(),
       firm: j.firm,
       consistency_pct: fr.consistency_pct ?? j.consistency_pct,
       consistency_cushion_pct: fr.consistency_cushion_pct ?? j.consistency_cushion_pct,
@@ -435,7 +436,8 @@ app.post('/api/import', webMultipart('files'), (req, res) => {
   const results = [];
   for (const f of req.files || []) {
     try {
-      results.push({ file: f.originalname, ...importCsv(f.buffer.toString('utf8'), f.originalname, id) });
+      // tz = the uploader's browser time zone; times are converted to New York.
+      results.push({ file: f.originalname, ...importCsv(f.buffer.toString('utf8'), f.originalname, id, String(req.body?.tz || '')) });
     } catch (e) {
       results.push({ file: f.originalname, error: e.message });
     }
@@ -551,7 +553,7 @@ app.post('/api/trades', (req, res) => {
   const points = b.points == null || b.points === '' ? null : Number(b.points);
   // When only a date/time is given, use it for both entry and exit (a single
   // moment is fine for after-the-fact review; duration is unknown).
-  const exit_time = b.exit_time || b.entry_time || new Date().toISOString().slice(0, 19);
+  const exit_time = b.exit_time || b.entry_time || wallAt(Date.now()); // New York now
   const entry_time = b.entry_time || exit_time;
   const contract = String(b.contract || product).trim().toUpperCase();
   // ALWAYS clip_only=1: a manual review entry is never a counted trade (only CSV
@@ -885,6 +887,7 @@ export default app;
 
 if (!isWeb) {
   applyFirmFeeDefaults(); // local DB: one-time firm fee defaults for older accounts
+  migrateTimesToNY(); // local DB: one-time conversion of older accounts to New York time
   app.listen(PORT, '0.0.0.0', () => {
     const ip = lanIp();
     console.log(`journal api on http://localhost:${PORT}`);

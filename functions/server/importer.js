@@ -12,6 +12,7 @@
 import crypto from 'node:crypto';
 import Papa from 'papaparse';
 import { db, productMap, feeFor } from './db.js';
+import { NY, toNY, validTz } from './time.js';
 
 const norm = (h) => String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -54,19 +55,23 @@ export function productFromContract(contract) {
   return c.replace(/[^A-Z].*$/, '');
 }
 
-function parseTime(v) {
+// Tradovate exports the uploader's LOCAL time ("04/23/2026 09:31:12" or ISO,
+// no zone). `tz` = the browser's time zone sent with the upload; the result is
+// New York wall-clock time (see time.js), which is how every time is stored.
+function parseTime(v, tz = NY) {
   if (v == null || v === '') return null;
-  // Tradovate exports local time like "04/23/2026 09:31:12" or ISO strings.
   const s = String(v).trim();
   const us = s.match(/^(\d{2})\/(\d{2})\/(\d{4})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
   if (us) {
     const [, mm, dd, yyyy, H, M, S] = us;
-    return `${yyyy}-${mm}-${dd}T${H}:${M}:${S || '00'}`;
+    return toNY(`${yyyy}-${mm}-${dd}T${H}:${M}:${S || '00'}`, tz);
   }
+  const iso = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?$/);
+  if (iso) return toNY(`${iso[1]}T${iso[2]}:${iso[3] || '00'}`, tz);
   const d = new Date(s);
   if (!Number.isNaN(d.getTime())) {
     const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    return toNY(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`, tz);
   }
   return null;
 }
@@ -77,7 +82,8 @@ const num = (v) => {
   return Number.isNaN(n) ? null : n;
 };
 
-export function importCsv(text, filename, journalId) {
+export function importCsv(text, filename, journalId, tz = NY) {
+  if (!validTz(tz)) tz = NY;
   const parsed = Papa.parse(text.replace(/^﻿/, ''), { header: true, skipEmptyLines: true });
   const rows = parsed.data;
   if (!rows.length) return { kind: 'empty', fills: 0, trades: 0, skipped: 0 };
@@ -86,10 +92,10 @@ export function importCsv(text, filename, journalId) {
   const isPerformance = headers.some((h) => P.pnl.includes(h)) &&
     (headers.some((h) => P.buyPrice.includes(h)) || headers.some((h) => P.soldTime.includes(h)));
 
-  return isPerformance ? importPerformance(rows, filename, journalId) : importFills(rows, filename, journalId);
+  return isPerformance ? importPerformance(rows, filename, journalId, tz) : importFills(rows, filename, journalId, tz);
 }
 
-function importFills(rows, filename, journalId) {
+function importFills(rows, filename, journalId, tz) {
   const products = productMap();
   const insert = db.prepare(`INSERT OR IGNORE INTO fills
     (journal_id, account, contract, product, side, qty, price, fill_time, source_file, hash)
@@ -97,7 +103,7 @@ function importFills(rows, filename, journalId) {
   let added = 0, skipped = 0, otherMarkets = 0;
   const tx = db.transaction(() => {
     for (const row of rows) {
-      const time = parseTime(pick(row, F.time));
+      const time = parseTime(pick(row, F.time), tz);
       const sideRaw = String(pick(row, F.side) || '').toLowerCase();
       const side = sideRaw.startsWith('b') ? 'buy' : sideRaw.startsWith('s') ? 'sell' : null;
       const qty = Math.abs(Math.round(num(pick(row, F.qty)) ?? 0));
@@ -206,7 +212,7 @@ export function rebuildTradesFromFills(journalId) {
   return count;
 }
 
-function importPerformance(rows, filename, journalId) {
+function importPerformance(rows, filename, journalId, tz) {
   const products = productMap();
   const insert = db.prepare(`INSERT INTO trades
     (journal_id, account, product, contract, direction, qty, entry_time, exit_time,
@@ -230,8 +236,8 @@ function importPerformance(rows, filename, journalId) {
       const buyPrice = num(pick(row, P.buyPrice));
       const sellPrice = num(pick(row, P.sellPrice));
       const pnlRaw = num(pick(row, P.pnl));
-      const bought = parseTime(pick(row, P.boughtTime));
-      const sold = parseTime(pick(row, P.soldTime));
+      const bought = parseTime(pick(row, P.boughtTime), tz);
+      const sold = parseTime(pick(row, P.soldTime), tz);
       if (!contract || !qty || pnlRaw == null || (!bought && !sold)) { skipped++; continue; }
 
       const direction = (bought && sold && bought <= sold) || (bought && !sold) ? 'long' : 'short';

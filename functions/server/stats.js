@@ -1,6 +1,7 @@
 // Aggregations the dashboard reads. Everything derives from the trades table;
 // "day" means the trade's EXIT date (when P&L was realized).
 import { db, getJournal } from './db.js';
+import { nyToday } from './time.js';
 
 // Every aggregate reads through here, so filtering clip_only = 1 (Film Room clip
 // placeholders) in ONE place keeps them out of P&L, calendar, challenge, win
@@ -251,7 +252,7 @@ export function risk(journalId) {
   // flat baseline so the growth chart still renders: balance flat at start,
   // threshold flat at start − dd.
   if (series.length === 0) {
-    const d0 = j.deposit_date || new Date().toISOString().slice(0, 10);
+    const d0 = j.deposit_date || nyToday();
     const dt = new Date(d0 + 'T00:00:00Z'); dt.setUTCDate(dt.getUTCDate() + 1); // UTC-safe +1 day
     const d1 = dt.toISOString().slice(0, 10);
     series.push({ date: d0, balance: r2(start), threshold: r2(threshold) });
@@ -673,7 +674,7 @@ export function challenge(journalId) {
   // trailing threshold or (b) hitting the daily loss limit — whichever is
   // closer. Subtracts what you've already lost TODAY, so it's a live "stop for
   // the day" number, not a fresh-session figure. ---
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = nyToday(); // New York calendar day
   const todayRow = eq.find((d) => d.date === todayKey);
   const todayPnl = todayRow ? todayRow.pnl : 0;
   const todayLoss = Math.max(0, -todayPnl);

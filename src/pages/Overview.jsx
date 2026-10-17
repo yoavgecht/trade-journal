@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   Tooltip, CartesianGrid, ReferenceLine, Cell,
 } from 'recharts';
-import { api, money, fmt } from '../api.js';
+import { api, money, fmt, nyToday } from '../api.js';
 import { fundedRulesFor } from '../presets.js';
 import PassFundedModal from '../components/PassFundedModal.jsx';
 import PayoutModal from '../components/PayoutModal.jsx';
@@ -121,7 +121,7 @@ function ProfitCalendar({ equity, payouts, funded, conv, onDayClick }) {
     for (const p of (payouts || [])) m[p.date] = (m[p.date] || 0) + p.amount;
     return m;
   }, [payouts]);
-  const latest = equity.length ? equity[equity.length - 1].date : new Date().toISOString().slice(0, 10);
+  const latest = equity.length ? equity[equity.length - 1].date : nyToday();
   const [ym, setYm] = useState(() => latest.slice(0, 7)); // "YYYY-MM"
 
   const [year, month] = ym.split('-').map(Number);
@@ -159,7 +159,7 @@ function ProfitCalendar({ equity, payouts, funded, conv, onDayClick }) {
           const data = byDate[key(d)];
           const payout = payoutByDate[key(d)];
           const out = d.getMonth() !== month - 1;
-          const today = key(d) === key(new Date()); // local date, not UTC
+          const today = key(d) === nyToday(); // New York calendar day
           const cls = data ? (data.pnl >= 0 ? 'green' : 'red') : '';
           // A trading day (or a payout day) is always shown + clickable, even when
           // it spills into an adjacent-month cell (e.g. Jun 30 in the July grid) —

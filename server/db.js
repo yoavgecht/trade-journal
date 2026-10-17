@@ -13,6 +13,8 @@
 // skips anything else.
 import Database from 'better-sqlite3';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import crypto from 'node:crypto';
+import { NY, toNY } from './time.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -247,6 +249,9 @@ for (const [col, ddl] of [
   ['fee_mnq', 'fee_mnq REAL'],
   ['fee_mes', 'fee_mes REAL'],
   ['fee_defaults_applied', 'fee_defaults_applied INTEGER NOT NULL DEFAULT 0'],
+  // Time zone the account's stored times are in. NULL = imported before times
+  // were normalized (the uploader's local time) → migrateTimesToNY converts it.
+  ['times_tz', 'times_tz TEXT'],
 ]) {
   if (jCols.length && !jCols.includes(col)) db.exec(`ALTER TABLE journals ADD COLUMN ${ddl}`);
 }
@@ -354,6 +359,30 @@ export function applyFirmFeeDefaults() {
   }
 }
 export { FEE_DEFAULTS_VERSION };
+
+// Accounts imported before times were normalized hold the uploader's local
+// wall-clock (the owner's browser = Israel). Convert their trades + fills to New
+// York once, and re-hash fills (the hash includes the time; a stale hash would
+// let a re-import duplicate them). New accounts are created with times_tz = NY.
+const LEGACY_TZ = 'Asia/Jerusalem';
+export function migrateTimesToNY() {
+  const legacy = db.prepare('SELECT id FROM journals WHERE times_tz IS NULL').all();
+  if (!legacy.length) return;
+  const updTrade = db.prepare('UPDATE trades SET entry_time = ?, exit_time = ? WHERE id = ?');
+  const updFill = db.prepare('UPDATE fills SET fill_time = ?, hash = ? WHERE id = ?');
+  for (const { id } of legacy) {
+    for (const t of db.prepare('SELECT id, entry_time, exit_time FROM trades WHERE journal_id = ?').all(id)) {
+      updTrade.run(toNY(t.entry_time, LEGACY_TZ), toNY(t.exit_time, LEGACY_TZ), t.id);
+    }
+    for (const f of db.prepare('SELECT * FROM fills WHERE journal_id = ?').all(id)) {
+      const time = toNY(f.fill_time, LEGACY_TZ);
+      const hash = crypto.createHash('sha1')
+        .update([f.journal_id, f.account, f.contract, f.side, f.qty, f.price, time].join('|')).digest('hex');
+      updFill.run(time, hash, f.id);
+    }
+    db.prepare('UPDATE journals SET times_tz = ? WHERE id = ?').run(NY, id);
+  }
+}
 
 export function getJournal(id) {
   return db.prepare('SELECT * FROM journals WHERE id = ?').get(id);

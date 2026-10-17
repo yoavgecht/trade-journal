@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, Cell,
 } from 'recharts';
-import { api, money, fmt, getActiveJournalId } from '../api.js';
+import { api, money, fmt, getActiveJournalId, nyNow } from '../api.js';
 import TradePanel, { MARKET_MOVES, ENTRY_TIMINGS } from '../components/TradePanel.jsx';
 import { MediaImg, MediaVideo } from '../components/Media.jsx';
 
@@ -64,14 +64,9 @@ function AddTradeModal({ onCreated, onClose }) {
   const [points, setPoints] = useState('');
   const [accounts, setAccounts] = useState([]);
   const [journalId, setJournalId] = useState(() => getActiveJournalId() || '');
-  // Default to LOCAL now (not UTC — toISOString() is UTC and would shift the day/
-  // hours in a datetime-local input). This is a "past trades" modal, so set the
-  // day to when you actually traded.
-  const [when, setWhen] = useState(() => {
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0, 16);
-  });
+  // Times are New York time everywhere — default to NOW IN NEW YORK. This is a
+  // "past trades" modal, so set the day/time to when you actually traded (NY).
+  const [when, setWhen] = useState(() => nyNow());
   const [busy, setBusy] = useState(false);
 
   // Account picker — active + archived, so a clip can be attributed to any account.
@@ -140,7 +135,7 @@ function AddTradeModal({ onCreated, onClose }) {
           <div className="field"><label>Points (optional)</label>
             <input type="number" step="any" value={points} onChange={(e) => setPoints(e.target.value)} placeholder="e.g. 8" />
           </div>
-          <div className="field"><label>When — set the day you took it</label>
+          <div className="field"><label>When (New York time) — set the day you took it</label>
             <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
           </div>
         </div>
