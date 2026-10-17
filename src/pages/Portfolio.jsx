@@ -29,7 +29,9 @@ function AccountCard({ a, onOpen, onDelete }) {
           background: badgeBg(s.color), color: s.color, whiteSpace: 'nowrap',
         }}>{s.label}</span>
         <button className="acct-del" title="Delete account" style={{ marginLeft: 8 }}
-          onClick={(e) => { e.stopPropagation(); onDelete(a); }}>🗑</button>
+          onClick={(e) => { e.stopPropagation(); onDelete(a); }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
       </div>
 
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
@@ -95,6 +97,9 @@ export default function Portfolio({ dataVersion, onOpen, onAdd, onDelete, filter
           <div className="spacer" />
           <><span className="muted">Equity {money(totalEquity)} · </span>
             <span className={totalPnl >= 0 ? 'pos' : 'neg'} style={{ fontWeight: 700 }}>{money(totalPnl)}</span></>
+          <button onClick={() => onAdd(isFunded ? 'funded' : 'eval')} style={{ marginLeft: 12, padding: '8px 14px', fontSize: 14 }}>
+            ＋ New {isFunded ? 'Funded Account' : 'Challenge'}
+          </button>
         </div>
       )}
       {list.length === 0 ? (

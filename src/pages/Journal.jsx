@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ResponsiveContainer, AreaChart, Area, YAxis, ReferenceLine } from 'recharts';
 import { api, money, fmt } from '../api.js';
 import Lightbox from '../components/Lightbox.jsx';
+import { useMediaUrls } from '../components/Media.jsx';
 
 function DayCurve({ points }) {
   if (!points || points.length < 2) return <div className="muted" style={{ fontSize: 12, alignSelf: 'center' }}>—</div>;
@@ -37,6 +38,7 @@ function DailyLog({ day, onClose, onSaved }) {
   const [note, setNote] = useState(day.note || '');
   const [saving, setSaving] = useState(false);
   const [lb, setLb] = useState(null); // { images, start } for the screenshot lightbox
+  const shotUrls = useMediaUrls(day.screenshots);
   const save = async () => {
     setSaving(true);
     await api(`/day-log/${day.date}`, { method: 'PUT', body: { note } });
@@ -69,9 +71,9 @@ function DailyLog({ day, onClose, onSaved }) {
           <div style={{ marginBottom: 14 }}>
             <label className="stat-label">Screenshots ({day.screenshots.length}) — from this day's trades</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-              {day.screenshots.map((name, idx) => (
-                <img key={name} src={`/api/screenshots/${name}`} alt="trade screenshot"
-                  onClick={() => setLb({ images: day.screenshots.map((n) => `/api/screenshots/${n}`), start: idx })}
+              {shotUrls && day.screenshots.map((name, idx) => (
+                <img key={name} src={shotUrls[idx]} alt="trade screenshot"
+                  onClick={() => setLb({ images: shotUrls, start: idx })}
                   style={{ height: 110, borderRadius: 8, border: '1px solid var(--border)', cursor: 'zoom-in' }} />
               ))}
             </div>

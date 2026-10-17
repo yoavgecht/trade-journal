@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
+import { MediaImg } from '../components/Media.jsx';
 
 // A global study library of chart screenshots, grouped by what they show.
 export const CATEGORIES = ['Setup', 'Trap', 'Mistake', 'A+ Trade', 'Lesson'];
@@ -129,7 +130,7 @@ export default function Playbook() {
         <div className="lib-grid">
           {shown.map((it, i) => (
             <div key={it.id} className="lib-card">
-              <img src={`/api/screenshots/${it.filename}`} alt={it.title || ''}
+              <MediaImg name={it.filename} alt={it.title || ''}
                 onClick={() => setLb(i)} />
               <button className="lib-del" onClick={() => del(it.id)} title="Delete">✕</button>
               <div className="lib-body">
@@ -152,7 +153,7 @@ export default function Playbook() {
             <button className="lb-nav lb-prev" title="Previous (←)"
               onClick={(e) => { e.stopPropagation(); setLb((lb - 1 + shown.length) % shown.length); }}>‹</button>
           )}
-          <img className="lb-img" src={`/api/screenshots/${shown[lb].filename}`} alt={shown[lb].title || ''}
+          <MediaImg className="lb-img" name={shown[lb].filename} alt={shown[lb].title || ''}
             onClick={(e) => e.stopPropagation()} />
           {shown.length > 1 && (
             <button className="lb-nav lb-next" title="Next (→)"

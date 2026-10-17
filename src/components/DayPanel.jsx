@@ -1,7 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { api, money } from '../api.js';
+import { api, money, fmtNY } from '../api.js';
 import TradePanel, { parseJsonArr, fmtDur } from './TradePanel.jsx';
 import Lightbox from './Lightbox.jsx';
+import { useMediaUrls } from './Media.jsx';
+
+function TradeShots({ shots, onOpen }) {
+  const urls = useMediaUrls(shots);
+  if (!urls) return null;
+  return (
+    <div className="day-shots">
+      {shots.map((name, idx) => (
+        <img key={name} src={urls[idx]} alt="trade screenshot" onClick={() => onOpen(urls, idx)} />
+      ))}
+    </div>
+  );
+}
 
 // Day Review — opened by clicking a traded day on the profit calendar. Shows
 // every trade of that day with its annotations and screenshots (the
@@ -102,7 +115,7 @@ export default function DayPanel({ date, onClose, onChanged }) {
           return (
             <div key={t.id} className="day-card">
               <div className="row" style={{ marginBottom: 4 }}>
-                <b>{(t.exit_time || '').slice(11, 16)}</b>
+                <b>{fmtNY(t.exit_time)}</b>
                 <span>{t.contract} <span className="muted">{t.direction} × {t.qty}</span></span>
                 <span className="muted">{t.entry_price} → {t.exit_price} · {fmtDur(t.duration_s)}</span>
                 <div className="spacer" />
@@ -115,12 +128,7 @@ export default function DayPanel({ date, onClose, onChanged }) {
               </div>
               {t.notes && <div className="day-notes">{t.notes}</div>}
               {shots.length > 0 && (
-                <div className="day-shots">
-                  {shots.map((name, idx) => (
-                    <img key={name} src={`/api/screenshots/${name}`} alt="trade screenshot"
-                      onClick={() => setLb({ images: shots.map((n) => `/api/screenshots/${n}`), start: idx })} />
-                  ))}
-                </div>
+                <TradeShots shots={shots} onOpen={(urls, idx) => setLb({ images: urls, start: idx })} />
               )}
               <div className="row" style={{ marginTop: 6 }}>
                 <div className="spacer" />

@@ -4,6 +4,7 @@ import {
 } from 'recharts';
 import { api, money, fmt, getActiveJournalId } from '../api.js';
 import TradePanel, { MARKET_MOVES, ENTRY_TIMINGS } from '../components/TradePanel.jsx';
+import { MediaImg, MediaVideo } from '../components/Media.jsx';
 
 const MOVE_LABEL = Object.fromEntries(MARKET_MOVES);
 const TIMING_LABEL = Object.fromEntries(ENTRY_TIMINGS);
@@ -223,7 +224,7 @@ export default function Review({ dataVersion }) {
                 <div className="film-shots">
                   {t.video && (
                     <figure className="film-shot film-clip" onClick={(e) => e.stopPropagation()}>
-                      <video src={`/api/videos/${t.video}`} controls preload="metadata" />
+                      <MediaVideo name={t.video} controls preload="metadata" />
                       <button className="clip-expand" title="Theater mode — watch bigger"
                         onClick={(e) => { e.stopPropagation(); setTheater(t.video); }}>⛶</button>
                       <figcaption>Clip</figcaption>
@@ -231,7 +232,7 @@ export default function Review({ dataVersion }) {
                   )}
                   {t.screenshots.map((name, i) => (
                     <figure key={name} className="film-shot">
-                      <img src={`/api/screenshots/${name}`} alt="" />
+                      <MediaImg name={name} alt="" />
                       <figcaption>{i === 0 ? 'Entry' : 'Later'}</figcaption>
                     </figure>
                   ))}
@@ -264,7 +265,7 @@ export default function Review({ dataVersion }) {
                   onClick={(e) => { e.stopPropagation(); delClip(t.id); }}>✕</button>
                 <div className="film-shots">
                   <figure className="film-shot film-clip" onClick={(e) => e.stopPropagation()}>
-                    <video src={`/api/videos/${t.video}`} controls preload="metadata" />
+                    <MediaVideo name={t.video} controls preload="metadata" />
                     <button className="clip-expand" title="Theater mode — watch bigger"
                       onClick={(e) => { e.stopPropagation(); setTheater(t.video); }}>⛶</button>
                     <figcaption>Clip</figcaption>
@@ -407,7 +408,7 @@ export default function Review({ dataVersion }) {
       {theater && (
         <div className="theater-overlay" onClick={() => setTheater(null)}>
           <button className="theater-close" onClick={() => setTheater(null)} title="Close">✕</button>
-          <video className="theater-video" src={`/api/videos/${theater}`} controls autoPlay
+          <MediaVideo className="theater-video" name={theater} controls autoPlay
             onClick={(e) => e.stopPropagation()} />
         </div>
       )}

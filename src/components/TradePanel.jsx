@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { api, money } from '../api.js';
+import { api, money, fmtNY } from '../api.js';
+import { MediaVideo } from './Media.jsx';
 
 export const MISTAKES = [
   'revenge', 'oversized', 'no-plan', 'chased', 'moved-stop', 'early-exit',
@@ -74,6 +75,7 @@ export default function TradePanel({ trade, onClose, onSaved }) {
   const [qty, setQty] = useState(trade.qty || 1);
   const [video, setVideo] = useState(trade.video || null);
   const [videoBusy, setVideoBusy] = useState(false);
+  const [videoProgress, setVideoProgress] = useState(null); // 0–100 during upload
   const [videoDrag, setVideoDrag] = useState(false);
   const [saving, setSaving] = useState(false);
   const videoRef = useRef();
@@ -127,14 +129,25 @@ export default function TradePanel({ trade, onClose, onSaved }) {
       return;
     }
     setVideoBusy(true);
+    setVideoProgress(0);
     try {
       const ext = (file.name.match(/\.(mp4|mov|webm|m4v|ogg|ogv)$/i)?.[1] || 'mp4').toLowerCase();
       // Ask the server for an upload target: a signed Storage URL on the web
       // (clips can be 500 MB — too big for a Cloud Function body), a local
       // PUT endpoint in dev. Either way: PUT the bytes, then record the name.
       const { filename, url } = await api('/uploads/video-start', { method: 'POST', body: { tradeId: trade.id, ext } });
-      const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': file.type || 'video/mp4' }, body: file });
-      if (!res.ok) throw new Error(`upload failed (${res.status})`);
+      // XHR (not fetch) so we can report upload progress to the user.
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', url);
+        xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) setVideoProgress(Math.round((e.loaded / e.total) * 100));
+        };
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`upload failed (${xhr.status})`)));
+        xhr.onerror = () => reject(new Error('network error'));
+        xhr.send(file);
+      });
       await api(`/trades/${trade.id}/video`, { method: 'POST', body: { video: filename } });
       setVideo(filename);
       onSaved();
@@ -142,6 +155,7 @@ export default function TradePanel({ trade, onClose, onSaved }) {
       alert('Upload failed: ' + (e.message || 'error'));
     }
     setVideoBusy(false);
+    setVideoProgress(null);
   };
 
   const removeVideo = async () => {
@@ -164,7 +178,7 @@ export default function TradePanel({ trade, onClose, onSaved }) {
             <span className={`pnl ${trade.pnl >= 0 ? 'pos' : 'neg'}`}>{money(trade.pnl)}</span>
           </div>
           <div className="trade-sub" style={{ margin: 0 }}>
-            {(trade.entry_time || '').replace('T', ' ')} → {(trade.exit_time || '').replace('T', ' ').slice(11)}
+            {fmtNY(trade.entry_time)} → {fmtNY(trade.exit_time)}
             {trade.entry_price != null && <>{' · '}{trade.entry_price} → {trade.exit_price}</>}
             {trade.points != null && ` (${trade.points} pts)`}
             {trade.duration_s != null && <>{' · '}held {fmtDur(trade.duration_s)}</>}
@@ -180,7 +194,7 @@ export default function TradePanel({ trade, onClose, onSaved }) {
               <label>Trade replay clip — video only, up to 10 min</label>
               {video ? (
                 <div className="tp-video">
-                  <video src={`/api/videos/${video}`} controls preload="metadata" />
+                  <MediaVideo name={video} controls preload="metadata" />
                   <button className="rm" onClick={removeVideo} title="Remove clip">✕</button>
                 </div>
               ) : (
@@ -191,7 +205,12 @@ export default function TradePanel({ trade, onClose, onSaved }) {
                   onDragLeave={() => setVideoDrag(false)}
                   onDrop={(e) => { e.preventDefault(); setVideoDrag(false); uploadVideo(e.dataTransfer.files?.[0]); }}
                 >
-                  {videoBusy ? 'Uploading…' : videoDrag ? 'Drop it' : '＋ Add a clip (≤ 10 min)'}
+                  {videoBusy ? (
+                    <div className="up-wrap">
+                      <span>{videoProgress != null ? `Uploading… ${videoProgress}%` : 'Uploading…'}</span>
+                      <div className="up-bar"><div style={{ width: `${videoProgress || 0}%` }} /></div>
+                    </div>
+                  ) : videoDrag ? 'Drop it' : '＋ Add a clip (≤ 10 min)'}
                 </div>
               )}
               <input ref={videoRef} type="file" accept="video/*" hidden
@@ -301,7 +320,9 @@ export default function TradePanel({ trade, onClose, onSaved }) {
 
         {/* Sticky footer — always reachable without scrolling */}
         <div className="tp-foot">
-          <button disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
+          <button disabled={saving || videoBusy} onClick={save}>
+            {saving ? 'Saving…' : videoBusy ? 'Uploading clip…' : 'Save'}
+          </button>
           <button className="ghost" onClick={onClose}>Cancel</button>
           {trade.source === 'manual' && (
             <button className="ghost" style={{ marginLeft: 'auto', color: 'var(--red)' }}

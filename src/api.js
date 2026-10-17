@@ -33,6 +33,30 @@ export async function api(path, opts = {}) {
 export const fmt = (n, opts = {}) =>
   n == null ? '—' : n.toLocaleString('en-US', { maximumFractionDigits: 2, ...opts });
 
+// Trade times are stored as bare wall-clock strings in the browser's local
+// timezone (no TZ suffix). Charts show exchange (New York) time, so format
+// them for display as NY time — DST-aware via Intl.
+const nyTimeFmt = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+export const fmtNY = (iso) => (iso ? nyTimeFmt.format(new Date(iso)) : '—');
+
+// Resolve a media filename to a browser-loadable URL (signed Storage URL on the
+// web, static local path in dev). <img>/<video> tags can't attach Authorization
+// headers, so components resolve through this authenticated endpoint instead.
+// Signed URLs expire after 1h, so the cache refreshes well before that.
+const mediaCache = new Map(); // key -> { url, expires }
+const MEDIA_TTL = 50 * 60 * 1000;
+export function mediaUrl(name) {
+  if (!name) return Promise.resolve(null);
+  const key = String(name);
+  const hit = mediaCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.url;
+  const url = api(`/media/${encodeURIComponent(key)}`).then((r) => r.url).catch(() => null);
+  mediaCache.set(key, { url, expires: Date.now() + MEDIA_TTL });
+  return url;
+}
+
 export const money = (n) =>
   n == null ? '—' : `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 

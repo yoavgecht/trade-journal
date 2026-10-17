@@ -7,6 +7,7 @@ export default defineConfig({
     host: true, // serve on the LAN so a phone on the same Wi-Fi can open it (Vite prints a Network URL)
     proxy: {
       '/api': 'http://localhost:5175',
+      '/media': 'http://localhost:5175',
     },
   },
 });
