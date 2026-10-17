@@ -812,10 +812,19 @@ app.delete('/api/payouts/:pid', (req, res) => {
 // --- products (global: NQ/ES + micros) ----------------------------------------
 app.get('/api/products', (_req, res) => res.json(productMap()));
 app.patch('/api/products', (req, res) => {
-  for (const [sym, p] of Object.entries(req.body || {})) {
-    db.prepare('UPDATE products SET point_value = ?, fee_rt = ? WHERE symbol = ?')
-      .run(Number(p.point_value), Number(p.fee_rt), sym);
-  }
+  const before = productMap();
+  // Fees are subtracted at import, so a fee change must also re-price the
+  // trades already imported (gross = pnl + fees is unchanged; only the fee
+  // part moves). Without this a corrected fee only applied to FUTURE imports.
+  const reprice = db.prepare(`UPDATE trades SET fees = ROUND(qty * @fee, 2),
+    pnl = ROUND(pnl + fees - qty * @fee, 2) WHERE product = @sym`);
+  db.transaction(() => {
+    for (const [sym, p] of Object.entries(req.body || {})) {
+      db.prepare('UPDATE products SET point_value = ?, fee_rt = ? WHERE symbol = ?')
+        .run(Number(p.point_value), Number(p.fee_rt), sym);
+      if (before[sym] && Number(p.fee_rt) !== before[sym].fee_rt) reprice.run({ fee: Number(p.fee_rt), sym });
+    }
+  })();
   res.json(productMap());
 });
 
