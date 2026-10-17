@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, getJournal, productMap, runAsUser } from './db.js';
+import { db, getJournal, productMap, runAsUser, firmFees, repriceTrades, applyFirmFeeDefaults } from './db.js';
 import { importCsv } from './importer.js';
 import { summary, equity, patterns, risk, dashboard, challenge, insights, overviewAll, dailyJournal, review, archiveList } from './stats.js';
 import { isWeb, saveShot, deleteShot, deleteVideo, uploadUrl, streamShot, streamVideo, shotsDir, videosDir } from './media.js';
@@ -282,10 +282,15 @@ app.post('/api/journals', (req, res) => {
   const r = db.prepare(`INSERT INTO journals
     (name, start_balance, trailing_dd, daily_loss_limit, dd_stops_at_start, deposit_date,
      firm, phase, profit_target, consistency_pct, consistency_cushion_pct, min_profit_days, min_profit_day_amount, max_contracts,
-     min_payout, payout_cap, max_payouts, default_risk, dd_stop_mode, dd_buffer, cost)
+     min_payout, payout_cap, max_payouts, default_risk, dd_stop_mode, dd_buffer, cost,
+     fee_nq, fee_es, fee_defaults_applied)
     VALUES (@name, @start_balance, @trailing_dd, @daily_loss_limit, @dd_stops_at_start, @deposit_date,
      @firm, @phase, @profit_target, @consistency_pct, @consistency_cushion_pct, @min_profit_days, @min_profit_day_amount, @max_contracts,
-     @min_payout, @payout_cap, @max_payouts, @default_risk, @dd_stop_mode, @dd_buffer, @cost)`).run({
+     @min_payout, @payout_cap, @max_payouts, @default_risk, @dd_stop_mode, @dd_buffer, @cost,
+     @fee_nq, @fee_es, 1)`).run({
+    // NQ/ES fees default from the firm (Lucid 3.50, Apex 4.28) unless given.
+    fee_nq: b.fee_nq != null && b.fee_nq !== '' ? Number(b.fee_nq) : firmFees(b.firm).fee_nq,
+    fee_es: b.fee_es != null && b.fee_es !== '' ? Number(b.fee_es) : firmFees(b.firm).fee_es,
     name: String(b.name).trim(),
     start_balance: Number(b.start_balance ?? 50000),
     trailing_dd: Number(b.trailing_dd ?? 2500),
@@ -317,12 +322,20 @@ app.patch('/api/journals/:id', (req, res) => {
   const allowed = ['name', 'start_balance', 'trailing_dd', 'daily_loss_limit', 'dd_stops_at_start',
     'deposit_date', 'firm', 'phase', 'profit_target', 'consistency_pct', 'consistency_cushion_pct',
     'min_profit_days', 'min_profit_day_amount', 'max_contracts', 'min_payout', 'payout_cap', 'max_payouts', 'default_risk',
-    'dd_stop_mode', 'dd_buffer', 'broker', 'platform', 'cost', 'broker_username', 'broker_password'];
-  for (const k of allowed) {
-    if (k in (req.body || {})) {
-      db.prepare(`UPDATE journals SET ${k} = ? WHERE id = ?`).run(req.body[k], j.id);
-    }
+    'dd_stop_mode', 'dd_buffer', 'broker', 'platform', 'cost', 'broker_username', 'broker_password',
+    'fee_nq', 'fee_es'];
+  const body = { ...(req.body || {}) };
+  for (const k of ['fee_nq', 'fee_es']) {
+    if (k in body) body[k] = body[k] === '' || body[k] == null ? null : Number(body[k]); // blank = use global
   }
+  db.transaction(() => {
+    for (const k of allowed) {
+      if (k in body) db.prepare(`UPDATE journals SET ${k} = ? WHERE id = ?`).run(body[k], j.id);
+    }
+    // Fee changed → re-price this account's already-imported trades.
+    if ('fee_nq' in body && body.fee_nq !== j.fee_nq) repriceTrades(j.id, 'NQ');
+    if ('fee_es' in body && body.fee_es !== j.fee_es) repriceTrades(j.id, 'ES');
+  })();
   res.json(getJournal(j.id));
 });
 
@@ -816,13 +829,16 @@ app.patch('/api/products', (req, res) => {
   // Fees are subtracted at import, so a fee change must also re-price the
   // trades already imported (gross = pnl + fees is unchanged; only the fee
   // part moves). Without this a corrected fee only applied to FUTURE imports.
-  const reprice = db.prepare(`UPDATE trades SET fees = ROUND(qty * @fee, 2),
-    pnl = ROUND(pnl + fees - qty * @fee, 2) WHERE product = @sym`);
+  // Accounts with their own NQ/ES fee (fee_nq / fee_es) are not affected.
   db.transaction(() => {
     for (const [sym, p] of Object.entries(req.body || {})) {
       db.prepare('UPDATE products SET point_value = ?, fee_rt = ? WHERE symbol = ?')
         .run(Number(p.point_value), Number(p.fee_rt), sym);
-      if (before[sym] && Number(p.fee_rt) !== before[sym].fee_rt) reprice.run({ fee: Number(p.fee_rt), sym });
+      if (before[sym] && Number(p.fee_rt) !== before[sym].fee_rt) {
+        const own = sym === 'NQ' ? 'fee_nq' : sym === 'ES' ? 'fee_es' : null;
+        const ids = db.prepare(`SELECT id FROM journals${own ? ` WHERE ${own} IS NULL` : ''}`).all();
+        for (const { id } of ids) repriceTrades(id, sym);
+      }
     }
   })();
   res.json(productMap());
@@ -866,6 +882,7 @@ function lanIp() {
 export default app;
 
 if (!isWeb) {
+  applyFirmFeeDefaults(); // local DB: one-time firm fee defaults for older accounts
   app.listen(PORT, '0.0.0.0', () => {
     const ip = lanIp();
     console.log(`journal api on http://localhost:${PORT}`);

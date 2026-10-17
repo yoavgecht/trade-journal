@@ -236,6 +236,14 @@ for (const [col, ddl] of [
   ['cost', 'cost REAL NOT NULL DEFAULT 0'],           // what you paid for this account (eval price + activation fee) — Expenses tab
   ['broker_username', 'broker_username TEXT'],        // broker login (stored locally, plaintext) — credentials bar
   ['broker_password', 'broker_password TEXT'],
+  // Per-account round-trip fee overrides ($/contract) for the minis — prop firms
+  // charge different commissions (Lucid $3.50, Apex $4.28). NULL = use the
+  // global products.fee_rt. fee_defaults_applied marks accounts whose firm
+  // default has been set (new accounts at creation; older ones once, by
+  // applyFirmFeeDefaults) so clearing an override later isn't undone.
+  ['fee_nq', 'fee_nq REAL'],
+  ['fee_es', 'fee_es REAL'],
+  ['fee_defaults_applied', 'fee_defaults_applied INTEGER NOT NULL DEFAULT 0'],
 ]) {
   if (jCols.length && !jCols.includes(col)) db.exec(`ALTER TABLE journals ADD COLUMN ${ddl}`);
 }
@@ -295,6 +303,45 @@ export function productMap() {
   const m = {};
   for (const p of db.prepare('SELECT * FROM products').all()) m[p.symbol] = p;
   return m;
+}
+
+// Default NQ/ES round-trip fee by prop firm (matched on the firm label).
+const FIRM_FEES = [
+  [/lucid/i, 3.5],
+  [/apex/i, 4.28],
+];
+export function firmFees(firm) {
+  const hit = FIRM_FEES.find(([re]) => re.test(String(firm || '')));
+  return hit ? { fee_nq: hit[1], fee_es: hit[1] } : { fee_nq: null, fee_es: null };
+}
+
+// The round-trip fee that applies to `product` in a given account: the
+// account's override for NQ/ES, else the global product fee.
+export function feeFor(journalId, product) {
+  const j = journalId ? getJournal(journalId) : null;
+  const own = product === 'NQ' ? j?.fee_nq : product === 'ES' ? j?.fee_es : null;
+  if (own != null) return own;
+  return productMap()[product]?.fee_rt || 0;
+}
+
+// Re-price a journal's already-imported trades for one product after its fee
+// changed: gross (pnl + fees) is kept, only the fee part moves.
+export function repriceTrades(journalId, product) {
+  const fee = feeFor(journalId, product);
+  db.prepare(`UPDATE trades SET fees = ROUND(qty * @fee, 2), pnl = ROUND(pnl + fees - qty * @fee, 2)
+    WHERE journal_id = @jid AND product = @product`).run({ fee, jid: journalId, product });
+}
+
+// One-time per account: give pre-existing Lucid/Apex accounts their firm's
+// default NQ/ES fee and re-price their trades. Runs after load (local start +
+// each web hydrate); accounts already handled are skipped via the flag.
+export function applyFirmFeeDefaults() {
+  for (const j of db.prepare('SELECT id, firm FROM journals WHERE fee_defaults_applied = 0').all()) {
+    const f = firmFees(j.firm);
+    db.prepare('UPDATE journals SET fee_nq = COALESCE(fee_nq, ?), fee_es = COALESCE(fee_es, ?), fee_defaults_applied = 1 WHERE id = ?')
+      .run(f.fee_nq, f.fee_es, j.id);
+    if (f.fee_nq != null) { repriceTrades(j.id, 'NQ'); repriceTrades(j.id, 'ES'); }
+  }
 }
 
 export function getJournal(id) {

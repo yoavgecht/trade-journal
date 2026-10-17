@@ -43,6 +43,9 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
         default_risk: Number(form.default_risk || 0),
         dd_stop_mode: form.dd_stop_mode || 'never',
         dd_buffer: Number(form.dd_buffer ?? 100),
+        // Blank = use the general fee from the Instruments table below.
+        fee_nq: form.fee_nq === '' || form.fee_nq == null ? null : Number(form.fee_nq),
+        fee_es: form.fee_es === '' || form.fee_es == null ? null : Number(form.fee_es),
       },
     });
     await api('/products', { method: 'PATCH', body: products });
@@ -180,6 +183,27 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
       </div>
 
       <div className="panel" style={{ marginBottom: 14 }}>
+        <h2>Fees for this account</h2>
+        <div className="field-row" style={{ maxWidth: 720 }}>
+          <div className="field">
+            <label>NQ round-trip fee ($/contract)</label>
+            <input type="number" step="0.01" value={form.fee_nq ?? ''} placeholder={`general: ${products.NQ?.fee_rt ?? ''}`}
+              onChange={(e) => set('fee_nq', e.target.value)} />
+          </div>
+          <div className="field">
+            <label>ES round-trip fee ($/contract)</label>
+            <input type="number" step="0.01" value={form.fee_es ?? ''} placeholder={`general: ${products.ES?.fee_rt ?? ''}`}
+              onChange={(e) => set('fee_es', e.target.value)} />
+          </div>
+          <div className="field" />
+        </div>
+        <div className="muted" style={{ marginTop: 4 }}>
+          Set automatically from the firm (Lucid $3.50, Apex $4.28). Leave blank to use the general fee below.
+          Changing a fee re-prices this account's imported trades.
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginBottom: 14 }}>
         <h2>Instruments (NQ / ES futures)</h2>
         <table style={{ maxWidth: 460 }}>
           <thead><tr><th>Symbol</th><th>$ / point</th><th>Round-trip fees ($/contract)</th></tr></thead>
@@ -196,8 +220,9 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
           </tbody>
         </table>
         <div className="muted" style={{ marginTop: 8 }}>
-          Fees apply to trades paired from Fills exports (Tradovate fills don't include commissions).
-          Re-import after changing fees to recalculate.
+          General fees: used for micros, and for NQ/ES in accounts without their own fee above.
+          Tradovate exports don't include commissions, so fees are subtracted here; changing one
+          re-prices already-imported trades.
         </div>
       </div>
 

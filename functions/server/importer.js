@@ -11,7 +11,7 @@
 // lowercased, alphanumeric-only names against candidate lists.
 import crypto from 'node:crypto';
 import Papa from 'papaparse';
-import { db, productMap } from './db.js';
+import { db, productMap, feeFor } from './db.js';
 
 const norm = (h) => String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -163,7 +163,7 @@ export function rebuildTradesFromFills(journalId) {
         const entryAvg = closedPairs.reduce((s, p) => s + p.entryPrice * p.qty, 0) / totQty;
         const exitAvg = closedPairs.reduce((s, p) => s + p.exitPrice * p.qty, 0) / totQty;
         const points = dir === 'long' ? exitAvg - entryAvg : entryAvg - exitAvg;
-        const fees = totQty * product.fee_rt;
+        const fees = totQty * feeFor(journalId, f0.product);
         const pnl = points * product.point_value * totQty - fees;
         const durS = Math.max(0, (new Date(lastFill.fill_time) - new Date(entryTime)) / 1000);
         const r = insert.run(
@@ -245,7 +245,7 @@ function importPerformance(rows, filename, journalId) {
       const points = entryPrice != null && exitPrice != null
         ? (direction === 'long' ? exitPrice - entryPrice : entryPrice - exitPrice)
         : pnlRaw / (pv * qty);
-      const fees = qty * (products[product]?.fee_rt || 0);
+      const fees = qty * feeFor(journalId, product);
       const durS = entryTime && exitTime ? Math.max(0, (new Date(exitTime) - new Date(entryTime)) / 1000) : null;
       const account = String(pick(row, P.account) || 'default').trim();
 
