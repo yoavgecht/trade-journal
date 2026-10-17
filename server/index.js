@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, getJournal, productMap, runAsUser, firmFees, repriceTrades, applyFirmFeeDefaults } from './db.js';
+import { db, getJournal, productMap, runAsUser, firmFees, repriceTrades, applyFirmFeeDefaults, FEE_COLS, FEE_DEFAULTS_VERSION } from './db.js';
 import { importCsv } from './importer.js';
 import { summary, equity, patterns, risk, dashboard, challenge, insights, overviewAll, dailyJournal, review, archiveList } from './stats.js';
 import { isWeb, saveShot, deleteShot, deleteVideo, uploadUrl, streamShot, streamVideo, shotsDir, videosDir } from './media.js';
@@ -283,14 +283,15 @@ app.post('/api/journals', (req, res) => {
     (name, start_balance, trailing_dd, daily_loss_limit, dd_stops_at_start, deposit_date,
      firm, phase, profit_target, consistency_pct, consistency_cushion_pct, min_profit_days, min_profit_day_amount, max_contracts,
      min_payout, payout_cap, max_payouts, default_risk, dd_stop_mode, dd_buffer, cost,
-     fee_nq, fee_es, fee_defaults_applied)
+     fee_nq, fee_es, fee_mnq, fee_mes, fee_defaults_applied)
     VALUES (@name, @start_balance, @trailing_dd, @daily_loss_limit, @dd_stops_at_start, @deposit_date,
      @firm, @phase, @profit_target, @consistency_pct, @consistency_cushion_pct, @min_profit_days, @min_profit_day_amount, @max_contracts,
      @min_payout, @payout_cap, @max_payouts, @default_risk, @dd_stop_mode, @dd_buffer, @cost,
-     @fee_nq, @fee_es, 1)`).run({
-    // NQ/ES fees default from the firm (Lucid 3.50, Apex 4.28) unless given.
-    fee_nq: b.fee_nq != null && b.fee_nq !== '' ? Number(b.fee_nq) : firmFees(b.firm).fee_nq,
-    fee_es: b.fee_es != null && b.fee_es !== '' ? Number(b.fee_es) : firmFees(b.firm).fee_es,
+     @fee_nq, @fee_es, @fee_mnq, @fee_mes, @fee_defaults_applied)`).run({
+    // Fees default from the firm (Lucid 3.50, Apex 4.28, every contract) unless given.
+    ...Object.fromEntries(Object.values(FEE_COLS).map((c) => [c,
+      b[c] != null && b[c] !== '' ? Number(b[c]) : firmFees(b.firm)[c]])),
+    fee_defaults_applied: FEE_DEFAULTS_VERSION,
     name: String(b.name).trim(),
     start_balance: Number(b.start_balance ?? 50000),
     trailing_dd: Number(b.trailing_dd ?? 2500),
@@ -323,9 +324,9 @@ app.patch('/api/journals/:id', (req, res) => {
     'deposit_date', 'firm', 'phase', 'profit_target', 'consistency_pct', 'consistency_cushion_pct',
     'min_profit_days', 'min_profit_day_amount', 'max_contracts', 'min_payout', 'payout_cap', 'max_payouts', 'default_risk',
     'dd_stop_mode', 'dd_buffer', 'broker', 'platform', 'cost', 'broker_username', 'broker_password',
-    'fee_nq', 'fee_es'];
+    ...Object.values(FEE_COLS)];
   const body = { ...(req.body || {}) };
-  for (const k of ['fee_nq', 'fee_es']) {
+  for (const k of Object.values(FEE_COLS)) {
     if (k in body) body[k] = body[k] === '' || body[k] == null ? null : Number(body[k]); // blank = use global
   }
   db.transaction(() => {
@@ -333,8 +334,9 @@ app.patch('/api/journals/:id', (req, res) => {
       if (k in body) db.prepare(`UPDATE journals SET ${k} = ? WHERE id = ?`).run(body[k], j.id);
     }
     // Fee changed → re-price this account's already-imported trades.
-    if ('fee_nq' in body && body.fee_nq !== j.fee_nq) repriceTrades(j.id, 'NQ');
-    if ('fee_es' in body && body.fee_es !== j.fee_es) repriceTrades(j.id, 'ES');
+    for (const [product, c] of Object.entries(FEE_COLS)) {
+      if (c in body && body[c] !== j[c]) repriceTrades(j.id, product);
+    }
   })();
   res.json(getJournal(j.id));
 });
@@ -829,13 +831,13 @@ app.patch('/api/products', (req, res) => {
   // Fees are subtracted at import, so a fee change must also re-price the
   // trades already imported (gross = pnl + fees is unchanged; only the fee
   // part moves). Without this a corrected fee only applied to FUTURE imports.
-  // Accounts with their own NQ/ES fee (fee_nq / fee_es) are not affected.
+  // Accounts with their own fee for that product (fee_nq/es/mnq/mes) are not affected.
   db.transaction(() => {
     for (const [sym, p] of Object.entries(req.body || {})) {
       db.prepare('UPDATE products SET point_value = ?, fee_rt = ? WHERE symbol = ?')
         .run(Number(p.point_value), Number(p.fee_rt), sym);
       if (before[sym] && Number(p.fee_rt) !== before[sym].fee_rt) {
-        const own = sym === 'NQ' ? 'fee_nq' : sym === 'ES' ? 'fee_es' : null;
+        const own = FEE_COLS[sym] || null;
         const ids = db.prepare(`SELECT id FROM journals${own ? ` WHERE ${own} IS NULL` : ''}`).all();
         for (const { id } of ids) repriceTrades(id, sym);
       }

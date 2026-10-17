@@ -44,8 +44,8 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
         dd_stop_mode: form.dd_stop_mode || 'never',
         dd_buffer: Number(form.dd_buffer ?? 100),
         // Blank = use the general fee from the Instruments table below.
-        fee_nq: form.fee_nq === '' || form.fee_nq == null ? null : Number(form.fee_nq),
-        fee_es: form.fee_es === '' || form.fee_es == null ? null : Number(form.fee_es),
+        ...Object.fromEntries(['fee_nq', 'fee_es', 'fee_mnq', 'fee_mes'].map((c) =>
+          [c, form[c] === '' || form[c] == null ? null : Number(form[c])])),
       },
     });
     await api('/products', { method: 'PATCH', body: products });
@@ -185,20 +185,16 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
       <div className="panel" style={{ marginBottom: 14 }}>
         <h2>Fees for this account</h2>
         <div className="field-row" style={{ maxWidth: 720 }}>
-          <div className="field">
-            <label>NQ round-trip fee ($/contract)</label>
-            <input type="number" step="0.01" value={form.fee_nq ?? ''} placeholder={`general: ${products.NQ?.fee_rt ?? ''}`}
-              onChange={(e) => set('fee_nq', e.target.value)} />
-          </div>
-          <div className="field">
-            <label>ES round-trip fee ($/contract)</label>
-            <input type="number" step="0.01" value={form.fee_es ?? ''} placeholder={`general: ${products.ES?.fee_rt ?? ''}`}
-              onChange={(e) => set('fee_es', e.target.value)} />
-          </div>
-          <div className="field" />
+          {[['NQ', 'fee_nq'], ['ES', 'fee_es'], ['MNQ', 'fee_mnq'], ['MES', 'fee_mes']].map(([sym, c]) => (
+            <div className="field" key={c}>
+              <label>{sym} round-trip fee ($/contract)</label>
+              <input type="number" step="0.01" value={form[c] ?? ''} placeholder={`general: ${products[sym]?.fee_rt ?? ''}`}
+                onChange={(e) => set(c, e.target.value)} />
+            </div>
+          ))}
         </div>
         <div className="muted" style={{ marginTop: 4 }}>
-          Set automatically from the firm (Lucid $3.50, Apex $4.28). Leave blank to use the general fee below.
+          Set automatically from the firm (Lucid $3.50, Apex $4.28, every contract). Leave blank to use the general fee below.
           Changing a fee re-prices this account's imported trades.
         </div>
       </div>
@@ -220,7 +216,7 @@ export default function Settings({ journal, onChanged, onJournalsChanged }) {
           </tbody>
         </table>
         <div className="muted" style={{ marginTop: 8 }}>
-          General fees: used for micros, and for NQ/ES in accounts without their own fee above.
+          General fees: used in accounts without their own fee above (e.g. firms other than Lucid/Apex).
           Tradovate exports don't include commissions, so fees are subtracted here; changing one
           re-prices already-imported trades.
         </div>

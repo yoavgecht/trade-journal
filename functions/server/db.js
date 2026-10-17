@@ -236,13 +236,16 @@ for (const [col, ddl] of [
   ['cost', 'cost REAL NOT NULL DEFAULT 0'],           // what you paid for this account (eval price + activation fee) — Expenses tab
   ['broker_username', 'broker_username TEXT'],        // broker login (stored locally, plaintext) — credentials bar
   ['broker_password', 'broker_password TEXT'],
-  // Per-account round-trip fee overrides ($/contract) for the minis — prop firms
-  // charge different commissions (Lucid $3.50, Apex $4.28). NULL = use the
-  // global products.fee_rt. fee_defaults_applied marks accounts whose firm
-  // default has been set (new accounts at creation; older ones once, by
-  // applyFirmFeeDefaults) so clearing an override later isn't undone.
+  // Per-account round-trip fee overrides ($/contract) — prop firms charge
+  // different commissions (Lucid $3.50, Apex $4.28; same for minis and micros,
+  // owner's choice). NULL = use the global products.fee_rt. fee_defaults_applied
+  // = the FEE_DEFAULTS_VERSION whose firm defaults were set (new accounts at
+  // creation; older ones once, by applyFirmFeeDefaults) so clearing an
+  // override later isn't undone.
   ['fee_nq', 'fee_nq REAL'],
   ['fee_es', 'fee_es REAL'],
+  ['fee_mnq', 'fee_mnq REAL'],
+  ['fee_mes', 'fee_mes REAL'],
   ['fee_defaults_applied', 'fee_defaults_applied INTEGER NOT NULL DEFAULT 0'],
 ]) {
   if (jCols.length && !jCols.includes(col)) db.exec(`ALTER TABLE journals ADD COLUMN ${ddl}`);
@@ -305,21 +308,26 @@ export function productMap() {
   return m;
 }
 
-// Default NQ/ES round-trip fee by prop firm (matched on the firm label).
+// Per-account fee column for each product.
+export const FEE_COLS = { NQ: 'fee_nq', ES: 'fee_es', MNQ: 'fee_mnq', MES: 'fee_mes' };
+// Default round-trip fee by prop firm (matched on the firm label), applied to
+// every contract (minis and micros).
 const FIRM_FEES = [
   [/lucid/i, 3.5],
   [/apex/i, 4.28],
 ];
+// Bump when FIRM_FEES gains coverage, so older accounts get the new defaults once.
+const FEE_DEFAULTS_VERSION = 2;
 export function firmFees(firm) {
   const hit = FIRM_FEES.find(([re]) => re.test(String(firm || '')));
-  return hit ? { fee_nq: hit[1], fee_es: hit[1] } : { fee_nq: null, fee_es: null };
+  return Object.fromEntries(Object.values(FEE_COLS).map((c) => [c, hit ? hit[1] : null]));
 }
 
 // The round-trip fee that applies to `product` in a given account: the
-// account's override for NQ/ES, else the global product fee.
+// account's own fee, else the global product fee.
 export function feeFor(journalId, product) {
   const j = journalId ? getJournal(journalId) : null;
-  const own = product === 'NQ' ? j?.fee_nq : product === 'ES' ? j?.fee_es : null;
+  const own = FEE_COLS[product] ? j?.[FEE_COLS[product]] : null;
   if (own != null) return own;
   return productMap()[product]?.fee_rt || 0;
 }
@@ -336,13 +344,16 @@ export function repriceTrades(journalId, product) {
 // default NQ/ES fee and re-price their trades. Runs after load (local start +
 // each web hydrate); accounts already handled are skipped via the flag.
 export function applyFirmFeeDefaults() {
-  for (const j of db.prepare('SELECT id, firm FROM journals WHERE fee_defaults_applied = 0').all()) {
+  const rows = db.prepare('SELECT id, firm FROM journals WHERE fee_defaults_applied < ?').all(FEE_DEFAULTS_VERSION);
+  for (const j of rows) {
     const f = firmFees(j.firm);
-    db.prepare('UPDATE journals SET fee_nq = COALESCE(fee_nq, ?), fee_es = COALESCE(fee_es, ?), fee_defaults_applied = 1 WHERE id = ?')
-      .run(f.fee_nq, f.fee_es, j.id);
-    if (f.fee_nq != null) { repriceTrades(j.id, 'NQ'); repriceTrades(j.id, 'ES'); }
+    const sets = Object.values(FEE_COLS).map((c) => `${c} = COALESCE(${c}, @${c})`).join(', ');
+    db.prepare(`UPDATE journals SET ${sets}, fee_defaults_applied = @v WHERE id = @id`)
+      .run({ ...f, v: FEE_DEFAULTS_VERSION, id: j.id });
+    for (const product of Object.keys(FEE_COLS)) repriceTrades(j.id, product);
   }
 }
+export { FEE_DEFAULTS_VERSION };
 
 export function getJournal(id) {
   return db.prepare('SELECT * FROM journals WHERE id = ?').get(id);
