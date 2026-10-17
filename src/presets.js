@@ -59,12 +59,80 @@ PRESETS['lucid-50k-flex-funded'] = {
   consistency_pct: 0, consistency_cushion_pct: 0, min_profit_days: 5, min_profit_day_amount: 150, max_contracts: 4,
   min_payout: 500, payout_cap: 2000, max_payouts: 5,
 };
-PRESETS['mffu-50k'] = {
-  label: 'My Funded Futures 50K (verify)',
-  firm: 'MFFU', phase: 'eval',
+// My Funded Futures — from myfundedfutures.com/plans/* (Oct 2026). Each plan is
+// its own firm label ("MFFU Pro", …) so passing an eval picks THAT plan's funded
+// rules (fundedRulesFor matches firm + size). Funded max-loss locks at start +
+// $100 (dd_stop_mode 'buffer'). MFFU has no "min $ per winning day" rule, so
+// min_profit_day_amount stays 0. Rapid's FUNDED drawdown is INTRADAY trailing —
+// this app models end-of-day, so treat its distance-to-floor as optimistic.
+const MFFU = {
+  // eval: target, dd (EOD), dll, contracts (minis), consistency %
+  // funded: contracts, dll, consistency %, qualifying days, min payout, cap per cycle, payouts before live
+  'Builder': {
+    '25K': { start: 25000, target: 1500, dd: 1000, dll: 600, c: 2, cons: 0, fc: 2, fcons: 50, days: 2, minPay: 250, cap: 1000, payouts: 5 },
+    '50K': { start: 50000, target: 3000, dd: 2000, dll: 1000, c: 4, cons: 0, fc: 4, fcons: 50, days: 2, minPay: 500, cap: 2000, payouts: 5 },
+    '100K': { start: 100000, target: 6000, dd: 3000, dll: 1750, c: 6, cons: 0, fc: 6, fcons: 50, days: 2, minPay: 1000, cap: 3000, payouts: 5 },
+    '150K': { start: 150000, target: 9000, dd: 4500, dll: 2500, c: 9, cons: 0, fc: 9, fcons: 50, days: 2, minPay: 1500, cap: 3500, payouts: 5 },
+  },
+  'Rapid': {
+    '25K': { start: 25000, target: 1500, dd: 1000, dll: 0, c: 3, cons: 50, fc: 3, fcons: 0, days: 0, minPay: 500, cap: 0, payouts: 0 },
+    '50K': { start: 50000, target: 3000, dd: 2000, dll: 0, c: 5, cons: 50, fc: 5, fcons: 0, days: 0, minPay: 500, cap: 0, payouts: 0 },
+    '100K': { start: 100000, target: 6000, dd: 3000, dll: 0, c: 8, cons: 50, fc: 8, fcons: 0, days: 0, minPay: 500, cap: 0, payouts: 0 },
+    '150K': { start: 150000, target: 9000, dd: 4500, dll: 0, c: 10, cons: 50, fc: 10, fcons: 0, days: 0, minPay: 500, cap: 0, payouts: 0 },
+  },
+  'Rapid EOD': {
+    // Eval contract cap isn't published — funded caps used.
+    '25K': { start: 25000, target: 1500, dd: 1000, dll: 0, c: 2, cons: 30, fc: 2, fcons: 0, days: 0, minPay: 500, cap: 0, payouts: 0 },
+    '50K': { start: 50000, target: 3000, dd: 2000, dll: 0, c: 3, cons: 30, fc: 3, fcons: 0, days: 0, minPay: 500, cap: 0, payouts: 0 },
+  },
+  'Pro': {
+    '50K': { start: 50000, target: 3000, dd: 2000, dll: 0, c: 3, cons: 50, fc: 3, fcons: 0, days: 0, minPay: 1000, cap: 0, payouts: 3 },
+    '100K': { start: 100000, target: 6000, dd: 3000, dll: 0, c: 6, cons: 50, fc: 6, fcons: 0, days: 0, minPay: 1000, cap: 0, payouts: 3 },
+    '150K': { start: 150000, target: 9000, dd: 4500, dll: 0, c: 9, cons: 50, fc: 9, fcons: 0, days: 0, minPay: 1000, cap: 0, payouts: 3 },
+  },
+};
+for (const [plan, sizes] of Object.entries(MFFU)) {
+  const firm = `MFFU ${plan}`;
+  const key = plan.toLowerCase().replace(/\s+/g, '-');
+  for (const [size, m] of Object.entries(sizes)) {
+    PRESETS[`mffu-${key}-${size}-eval`] = {
+      label: `MFFU ${plan} ${size} — Eval`,
+      firm, phase: 'eval',
+      start_balance: m.start, profit_target: m.target, trailing_dd: m.dd,
+      dd_stop_mode: 'never', dd_buffer: 100, daily_loss_limit: m.dll,
+      consistency_pct: m.cons, consistency_cushion_pct: 0, min_profit_days: 0, min_profit_day_amount: 0,
+      max_contracts: m.c,
+    };
+    PRESETS[`mffu-${key}-${size}-funded`] = {
+      label: `MFFU ${plan} ${size} — Sim-Funded${plan === 'Rapid' ? ' (intraday DD)' : ''}`,
+      firm, phase: 'funded',
+      start_balance: m.start, profit_target: 0, trailing_dd: m.dd,
+      dd_stop_mode: 'buffer', dd_buffer: 100, daily_loss_limit: m.dll,
+      consistency_pct: m.fcons, consistency_cushion_pct: 0,
+      min_profit_days: m.days, min_profit_day_amount: 0,
+      max_contracts: m.fc, min_payout: m.minPay, payout_cap: m.cap, max_payouts: m.payouts,
+    };
+  }
+}
+
+// Take Profit Trader 50K — its site was down for maintenance (Oct 2026), so
+// these come from consistent third-party summaries: VERIFY before relying.
+// Test: $3,000 target, $2,000 EOD max loss, no daily limit, 6 minis, 50%
+// consistency. PRO: INTRADAY trailing drawdown that stops at the starting
+// balance (dd_buffer 0; this app models end-of-day), no consistency rule.
+PRESETS['tpt-50k-test'] = {
+  label: 'Take Profit Trader 50K — Test (verify)',
+  firm: 'Take Profit Trader', phase: 'eval',
   start_balance: 50000, profit_target: 3000, trailing_dd: 2000,
-  dd_stop_mode: 'never', dd_buffer: 100, daily_loss_limit: 0,
-  consistency_pct: 0, consistency_cushion_pct: 0, min_profit_days: 5, min_profit_day_amount: 150, max_contracts: 6,
+  dd_stop_mode: 'never', dd_buffer: 0, daily_loss_limit: 0,
+  consistency_pct: 50, consistency_cushion_pct: 0, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 6,
+};
+PRESETS['tpt-50k-pro'] = {
+  label: 'Take Profit Trader 50K — PRO (verify, intraday DD)',
+  firm: 'Take Profit Trader', phase: 'funded',
+  start_balance: 50000, profit_target: 0, trailing_dd: 2000,
+  dd_stop_mode: 'buffer', dd_buffer: 0, daily_loss_limit: 0,
+  consistency_pct: 0, consistency_cushion_pct: 0, min_profit_days: 0, min_profit_day_amount: 0, max_contracts: 6,
 };
 PRESETS['custom'] = {
   label: 'Custom (set rules yourself)',
