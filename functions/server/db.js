@@ -12,12 +12,16 @@
 // time. Futures-only: NQ & ES (plus their micros MNQ/MES) — the importer
 // skips anything else.
 import Database from 'better-sqlite3';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const isWeb = process.env.TJ_STORAGE === 'firestore';
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-export const db = new Database(isWeb ? ':memory:' : path.join(root, 'journal.db'));
+
+// Schema + in-place migrations + product seed, applied to any database handle
+// (the local file, or a fresh per-user in-memory DB on the web).
+function initDb(db) {
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -246,6 +250,46 @@ for (const [sym, pv, fee] of [
   ['NQ', 20, 4.28], ['MNQ', 2, 1.04],
   ['ES', 50, 4.28], ['MES', 5, 1.04],
 ]) seedProducts.run(sym, pv, fee);
+return db;
+}
+
+// LOCAL: one file DB (journal.db). WEB: one in-memory DB PER USER — each
+// request runs inside runAsUser(uid) (AsyncLocalStorage), and `db` resolves to
+// that user's DB, so concurrent requests from different users can never read or
+// overwrite each other's data. Firestore stays the durable store behind every
+// per-user DB (see firestore-store.js). Outside a user context (unauthenticated
+// routes) `db` is an empty template DB.
+const baseDb = initDb(new Database(isWeb ? ':memory:' : path.join(root, 'journal.db')));
+const als = new AsyncLocalStorage();
+const userDbs = new Map(); // uid -> Database, in least-recently-used order
+const MAX_CACHED_USERS = 25; // evicted DBs are rehydrated from Firestore on next use
+
+export function userDb(uid) {
+  let d = userDbs.get(uid);
+  if (d) {
+    userDbs.delete(uid); // re-insert → most recently used
+  } else {
+    d = initDb(new Database(':memory:'));
+    if (userDbs.size >= MAX_CACHED_USERS) userDbs.delete(userDbs.keys().next().value);
+  }
+  userDbs.set(uid, d);
+  return d;
+}
+
+// Run fn (and everything it awaits) against uid's database.
+export function runAsUser(uid, fn) {
+  return isWeb ? als.run(userDb(uid), fn) : fn();
+}
+
+export const db = isWeb
+  ? new Proxy({}, {
+    get(_, key) {
+      const d = als.getStore() || baseDb;
+      const v = d[key];
+      return typeof v === 'function' ? v.bind(d) : v;
+    },
+  })
+  : baseDb;
 
 export function productMap() {
   const m = {};

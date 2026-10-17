@@ -10,10 +10,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, getJournal, productMap } from './db.js';
+import { db, getJournal, productMap, runAsUser } from './db.js';
 import { importCsv } from './importer.js';
 import { summary, equity, patterns, risk, dashboard, challenge, insights, overviewAll, dailyJournal, review, archiveList } from './stats.js';
-import { isWeb, saveShot, deleteShot, deleteVideo, uploadUrl, streamShot, streamVideo } from './media.js';
+import { isWeb, saveShot, deleteShot, deleteVideo, uploadUrl, streamShot, streamVideo, shotsDir, videosDir } from './media.js';
 
 const app = express();
 app.use(express.json());
@@ -68,10 +68,35 @@ function webMultipart(field) {
 // session cookies were the pre-Firebase model and are gone.
 const userCount = () => db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
 
-// Verified Firebase identity: { uid, email } or null.
+// Media <img>/<video> tags can't set Authorization headers, so every authed
+// response also stamps an httpOnly same-origin session cookie (re-verified via
+// the Firebase ID token on each request). Media stays behind requireAuth.
+const SESSION_COOKIE = 'tj_session';
+const parseCookies = (req) => {
+  const out = {};
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+};
+function stampSessionCookie(res, token) {
+  if (!token) return;
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: 12 * 60 * 60 * 1000,
+    path: '/api',
+    secure: isWeb, // web is HTTPS; localhost is plain http
+  });
+}
+
+// Verified Firebase identity: { uid, email } or null. The Bearer token is the
+// primary channel; the session cookie (for header-less <img>/<video> requests)
+// is accepted as a fallback.
 async function currentUser(req) {
   const h = req.headers.authorization || '';
-  const token = h.startsWith('Bearer ') ? h.slice(7).trim() : req.headers['x-session-token'] || null;
+  const token = h.startsWith('Bearer ') ? h.slice(7).trim() : req.headers['x-session-token'] || parseCookies(req)[SESSION_COOKIE] || null;
   if (!token) return null;
   try {
     const { verifyIdToken } = await import('./firestore-store.js');
@@ -88,40 +113,57 @@ function provisionUser(email) {
     .run(email || '', '', '');
 }
 
+// Load the user's data into their own DB. A FAILED load must stop the request:
+// carrying on with an empty DB would make the next save delete their data.
+async function loadUser(user) {
+  if (!isWeb) return true;
+  const { ensureHydratedFor } = await import('./firestore-store.js');
+  try {
+    await ensureHydratedFor(user.uid);
+    return true;
+  } catch (e) {
+    console.error('[store] hydrate failed:', e);
+    return false;
+  }
+}
+
+// Everything after this runs against the signed-in user's own DB (runAsUser).
 function requireAuth(req, res, next) {
   currentUser(req).then(async (user) => {
     if (!user) return res.status(401).json({ error: 'authentication required' });
     req.user = user;
-    provisionUser(user.email);
-    if (isWeb) {
-      const { ensureHydratedFor } = await import('./firestore-store.js');
-      await ensureHydratedFor(user.uid).catch((e) => console.error('[store] hydrate failed:', e));
-    }
-    next();
+    const h = req.headers.authorization || '';
+    stampSessionCookie(res, h.startsWith('Bearer ') ? h.slice(7).trim() : req.headers['x-session-token'] || null);
+    if (!(await loadUser(user))) return res.status(503).json({ error: 'could not load your data — try again' });
+    runAsUser(user.uid, () => {
+      provisionUser(user.email);
+      next();
+    });
   });
 }
 
 app.get('/api/me', async (req, res) => {
   const user = await currentUser(req);
-  if (user) {
+  const h = req.headers.authorization || '';
+  stampSessionCookie(res, h.startsWith('Bearer ') ? h.slice(7).trim() : req.headers['x-session-token'] || null);
+  if (!user) return res.json({ user: null, needsSetup: userCount() === 0 });
+  if (!(await loadUser(user))) return res.status(503).json({ error: 'could not load your data — try again' });
+  runAsUser(user.uid, () => {
     provisionUser(user.email);
-    if (isWeb) {
-      const { ensureHydratedFor } = await import('./firestore-store.js');
-      await ensureHydratedFor(user.uid).catch((e) => console.error('[store] hydrate failed:', e));
-    }
-  }
-  res.json({ user: user ? { id: user.uid, email: user.email } : null, needsSetup: userCount() === 0 });
+    res.json({ user: { id: user.uid, email: user.email }, needsSetup: userCount() === 0 });
+  });
 });
 
 // The client signs in/up with Firebase Auth itself; these routes just validate
 // the resulting ID token so the app (and the users row) is consistent.
 async function handleAuth(req, res) {
   try {
-    const { verifyIdToken, ensureHydratedFor } = await import('./firestore-store.js');
+    const { verifyIdToken } = await import('./firestore-store.js');
     const user = await verifyIdToken(String(req.body?.token || ''));
     req.user = user;
-    provisionUser(user.email);
-    if (isWeb) await ensureHydratedFor(user.uid).catch(() => {});
+    if (!(await loadUser(user))) return res.status(503).json({ error: 'could not load your data — try again' });
+    runAsUser(user.uid, () => provisionUser(user.email));
+    stampSessionCookie(res, String(req.body?.token || ''));
     res.json({ user: { id: user.uid, email: user.email } });
   } catch {
     res.status(401).json({ error: 'invalid session' });
@@ -135,20 +177,54 @@ app.post('/api/auth/logout', (_req, res) => res.json({ ok: true })); // client-s
 
 app.use('/api', requireAuth);
 
-// WEB mode: after every successful write, flush the in-memory SQLite DB to
-// Firestore so it survives instance recycling (see firestore-store.js). Must be
-// registered before the routes so it runs for every /api request.
+// WEB mode: after every successful write, flush the user's in-memory DB to
+// Firestore BEFORE the response goes out (see firestore-store.js). Saving after
+// the response isn't safe on Cloud Functions gen2: CPU is throttled once the
+// response is sent, so the save could stall or be lost. Must be registered
+// before the routes so it wraps every /api write.
 if (isWeb) {
   const { persistStore } = await import('./firestore-store.js');
   app.use((req, res, next) => {
-    res.on('finish', () => {
-      if (req.method !== 'GET' && res.statusCode >= 200 && res.statusCode < 400) {
-        persistStore(req.user);
-      }
-    });
+    if (req.method === 'GET' || req.method === 'HEAD') return next();
+    const end = res.end;
+    res.end = function (...args) {
+      if (res.statusCode < 200 || res.statusCode >= 400) return end.apply(res, args);
+      persistStore(req.user).then(
+        () => end.apply(res, args),
+        () => {
+          // Not in Firestore → don't claim success. (The change is still in the
+          // user's in-memory DB; the next successful save rewrites everything.)
+          res.statusCode = 503;
+          res.removeHeader('Content-Length');
+          res.removeHeader('ETag');
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          end.call(res, JSON.stringify({ error: 'could not save — try again' }));
+        },
+      );
+      return res;
+    };
     next();
   });
 }
+
+// Resolve a media file to a browser-loadable URL. <img>/<video> tags can't send
+// Authorization headers, so the client fetches this (with its token) and uses
+// the returned URL directly: a signed Storage URL on the web, a static local
+// path in dev.
+app.get('/api/media/:name', async (req, res) => {
+  const name = req.params.name;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) return res.status(400).json({ error: 'bad media name' });
+  if (isWeb) {
+    try {
+      const { signedReadUrl } = await import('./firestore-store.js');
+      return res.json({ url: await signedReadUrl(req.user.uid, name) });
+    } catch {
+      return res.status(404).json({ error: 'media not found' });
+    }
+  }
+  const isImage = /\.(png|jpe?g|gif|webp)$/i.test(name);
+  return res.json({ url: `/media/${isImage ? 'screenshots' : 'videos'}/${encodeURIComponent(name)}` });
+});
 
 
 // Film Room clips can be a few hundred MB. Cloud Functions cap request bodies
@@ -750,6 +826,12 @@ app.post('/api/reset', (req, res) => {
 });
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+// Local-only media serving for resolved URLs (/media/screenshots/…, /media/videos/…).
+// On the web, media stays in Cloud Storage behind signed URLs instead.
+if (!isWeb) {
+  app.use('/media/screenshots', express.static(shotsDir, { immutable: true, maxAge: '365d' }));
+  app.use('/media/videos', express.static(videosDir, { immutable: true, maxAge: '365d' }));
+}
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(root, 'dist')));
   app.get('*', (_req, res) => res.sendFile(path.join(root, 'dist', 'index.html')));

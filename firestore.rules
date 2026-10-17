@@ -2,31 +2,23 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // ===============================================================
-    // Assumed Data Model
+    // Data model (written by the `api` Cloud Function via the Admin SDK,
+    // which bypasses these rules — see server/firestore-store.js)
     // ===============================================================
     //
-    // users/{userId}
-    //   Owner profile: displayName, email, photoURL, uid, createdAt, updatedAt.
-    //   No passwords are stored. Firebase Authentication is the auth source.
+    // users/{uid}                              profile — the ONLY doc clients write
+    //                                          (src/firebase-auth.js mirrors it on sign-in;
+    //                                          beforeUserCreated also creates it)
+    // users/{uid}/settings/products            per-user product/fee overrides
+    // users/{uid}/settings/storage             { layout: 2 } once accounts are id-keyed
+    // users/{uid}/library/{itemId}             Film Room clips whose account was deleted
+    // users/{uid}/accounts/{journalId}         account (journal) + derived balance/equity
+    //   trades/{tradeId}                       round-trip trade + nested `meta` (tags, review)
+    //   fills/{fillId}                         raw Tradovate fills (source of truth for trades)
+    //   payouts/{payoutId} · manualDays/{date} · dayLogs/{date}
     //
-    // users/{userId}/accounts/{accountId}
-    //   Account: name, type ("challenge" | "funded"), propFirm, balances,
-    //   status, flexible rules map, createdAt, updatedAt.
-    //
-    // users/{userId}/accounts/{accountId}/trades/{tradeId}
-    //   Trade source data plus optional nested meta/discipline data.
-    //
-    // users/{userId}/accounts/{accountId}/dailyStats/{YYYY-MM-DD}
-    //   Derived daily stats. Trades remain the source of truth.
-    //
-    // users/{userId}/journal/{entryId}
-    // users/{userId}/playbook/{playbookId}
-    // users/{userId}/filmRoom/{videoId}
-    // users/{userId}/patterns/{patternId}
-    // users/{userId}/payouts/{payoutId}
-    // users/{userId}/settings/{settingId}
-    //
-    // All private app data is rooted under users/{userId}.
+    // Legacy (layout 1): accounts/{accountName} — kept untouched as a backup.
+    // Retired: users/{uid}/sessions — drained by the server.
     // ===============================================================
 
     function signedIn() {
@@ -60,23 +52,18 @@ service cloud.firestore {
         (!('userId' in data) || data.userId == userId);
     }
 
-    function validOwnedDocument(userId, data) {
-      return (!('uid' in data) || data.uid == userId) &&
-        (!('userId' in data) || data.userId == userId) &&
-        (!('ownerId' in data) || data.ownerId == userId);
-    }
-
     match /users/{userId} {
       allow read: if isOwner(userId);
       allow create, update: if isOwner(userId) &&
         validUserProfile(userId, request.resource.data);
       allow delete: if false;
 
+      // Everything under the profile is server-owned: the API keeps a working
+      // copy and diffs it against Firestore, so a direct client write would be
+      // overwritten (or deleted) on the next save. Owners may read their own data.
       match /{document=**} {
         allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) &&
-          validOwnedDocument(userId, request.resource.data);
-        allow delete: if isOwner(userId);
+        allow write: if false;
       }
     }
 

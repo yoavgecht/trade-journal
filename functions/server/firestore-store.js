@@ -6,17 +6,19 @@
 //                flush only the changed/new/deleted docs (batched, serialized).
 //   media      — screenshots/videos live in the default Storage bucket.
 //
-// Layout (hierarchical; rules deny clients direct access — the function writes
-// via the admin SDK, which bypasses rules). accountId = the journal NAME (e.g.
-// APEX0023); the numeric journal id stays in the doc as `id`. Each user's data
-// root is their Firebase Auth UID (verified from the ID token in
-// server/index.js → verifyIdToken) — the users collection only ever holds real
-// Firebase uids, and there is no _meta:
+// Layout (hierarchical; rules let clients write only the profile doc — the
+// function writes everything else via the admin SDK, which bypasses rules).
+// accountId = the journal's numeric id (stable across renames; layout 2). Each
+// user's data root is their Firebase Auth UID (verified from the ID token in
+// server/index.js → verifyIdToken). Every user works against their OWN
+// in-memory DB (db.js runAsUser), so users never share a working copy:
 //
+//   users/{uid}                            → profile (written by the client + beforeUserCreated)
 //   users/{uid}/
-//     sessions/{token}                     → sessions
+//     settings/products                    → per-user product/fee overrides
+//     settings/storage                     → { layout: 2 } once migrated to id-keyed accounts
 //     library/{itemId}                     → library_items
-//     accounts/{name}                      → journals row (snake_case columns kept)
+//     accounts/{journalId}                 → journals row (snake_case columns kept)
 //       brokerPassword                     AES-256-GCM with TJ_CRYPTO_KEY (plaintext only when no key)
 //       accountType/status/balance/initialBalance/target/maxDrawdown/disciplineScore/parentAccountId  ← derived
 //       equityHistory                      [{ date, equity }]  (array in the doc, per schema)
@@ -27,8 +29,10 @@
 //       dayLogs/{date}                     → day_logs
 //
 // Auth and products are NOT persisted here: Firebase Authentication owns the
-// identity record, and `products` is a static shared lookup (NQ/ES/MNQ/MES)
-// pre-seeded into the in-memory DB by db.js — neither belongs in a user's tree.
+// identity record, and `products` is a shared lookup (NQ/ES/MNQ/MES) pre-seeded
+// into the in-memory DB by db.js. The user's editable FEE settings, however,
+// live in settings/products (per-user) so imports use the same fee schedule on
+// every device — see hydrateStore / doPersist.
 // The account-derived numbers reuse stats.risk() so the stored balance/equity
 // curve is byte-for-byte the same thing the dashboard charts.
 import { getApps, initializeApp } from 'firebase-admin/app';
@@ -39,8 +43,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import Database from 'better-sqlite3';
-import { db } from './db.js';
+import { db, runAsUser } from './db.js';
 import { risk as statsRisk } from './stats.js';
 
 const PROJECT_ID = process.env.GCP_PROJECT || 'trade-journal-d7e7a';
@@ -127,46 +130,6 @@ const insert = (table, row) => {
   db.prepare(`INSERT OR IGNORE INTO ${table} (${c.join(',')}) VALUES (${c.map((x) => `@${x}`).join(',')})`).run(row);
 };
 
-// One-time bootstrap: the deploy bundles a snapshot of the data (see
-// functions/bootstrap.sqlite, copied from journal.db) so a brand-new uid with no
-// Firestore tree still gets the data on their first sign-in. Reads it read-only
-// and copies every table into the in-memory DB. After the user's first write the
-// tree exists under their uid and this never runs for them again.
-function bootstrapFromDisk() {
-  const file = fileURLToPath(new URL('../bootstrap.sqlite', import.meta.url));
-  if (!fs.existsSync(file)) return 0;
-  let boot;
-  try {
-    boot = new Database(file, { readonly: true });
-  } catch {
-    return 0;
-  }
-  let n = 0;
-  // journals must load before trades/trade_meta (FK references); column list is
-  // the intersection of source and destination schemas so harmless drift in the
-  // bundled snapshot (e.g. a dropped column like min_trading_days) can't fail
-  // the whole table.
-  for (const t of ['users', 'sessions', 'products', 'journals', 'trades',
-    'fills', 'trade_meta', 'payouts', 'manual_days', 'day_logs', 'library_items']) {
-    try {
-      const srcCols = new Set(boot.pragma(`table_info(${t})`).map((c) => c.name));
-      const dstCols = new Set(db.pragma(`table_info(${t})`).map((c) => c.name));
-      const cols = [...srcCols].filter((c) => dstCols.has(c));
-      if (!cols.length) continue;
-      const rows = boot.prepare(`SELECT ${cols.join(',')} FROM ${t}`).all();
-      if (!rows.length) continue;
-      const ins = db.prepare(`INSERT OR IGNORE INTO ${t} (${cols.join(',')}) VALUES (${cols.map((c) => `@${c}`).join(',')})`);
-      for (const r of rows) ins.run(r);
-      n += rows.length;
-    } catch (e) {
-      console.warn(`[store] bootstrap ${t} failed: ${e.message}`);
-    }
-  }
-  boot.close();
-  if (n) console.log(`[store] bootstrapped ${n} rows from bundled snapshot`);
-  return n;
-}
-
 // All inserts run inside one synchronous SQLite transaction: if anything fails
 // mid-way the whole hydration rolls back, so a retry never collides with a
 // partial restore (UNIQUE/PRIMARY KEY constraints). The async Firestore reads
@@ -186,9 +149,20 @@ export async function hydrateStore(uid) {
     DELETE FROM trades;
     DELETE FROM payouts;
     DELETE FROM library_items;
-    DELETE FROM sessions;
     DELETE FROM journals;
   `);
+
+  // Apply the user's product/fee settings (editable in Settings, stored per-user
+  // in settings/products) so imported P&L uses the same fee schedule as on their
+  // other devices. Products isn't in the DELETE list above, so this starts from
+  // the db.js defaults and overrides whatever the user has customized.
+  const ps = await firestore.doc(`${root}/settings/products`).get().catch(() => null);
+  if (ps?.exists) {
+    const upd = db.prepare('UPDATE products SET point_value = ?, fee_rt = ? WHERE symbol = ?');
+    for (const [sym, p] of Object.entries(ps.data() || {})) {
+      if (p && p.point_value != null && p.fee_rt != null) upd.run(Number(p.point_value), Number(p.fee_rt), sym);
+    }
+  }
 
   // No tree for this uid yet → brand-new account starts EMPTY. Its data is
   // created as the user uses the app (challenges, funded, film room, playbook)
@@ -198,12 +172,16 @@ export async function hydrateStore(uid) {
   if (!hasData) return;
 
   const pending = []; // [table, row]
+  // Layout 1 keyed accounts by NAME; layout 2 by numeric journal id. Until the
+  // first persist migrates a user (and sets settings/storage.layout = 2) only
+  // name-keyed docs exist. After that, the old name-keyed docs are left in
+  // place as a backup but ignored here (they'd resurrect deleted data).
+  const layout = (await firestore.doc(`${root}/settings/storage`).get().catch(() => null))?.data()?.layout || 1;
 
-  for (const d of (await firestore.collection(`${root}/sessions`).get()).docs) {
-    pending.push(['sessions', clean('sessions', d.data())]);
-  }
-
+  // Numeric (layout-2) docs sort first, so on an interrupted migration they win
+  // over a legacy duplicate (INSERT OR IGNORE keeps the first row per id).
   for (const a of (await firestore.collection(`${root}/accounts`).get()).docs) {
+    if (layout >= 2 && !isIdKey(a.id)) continue;
     const ad = a.data();
     const j = clean('journals', ad);
     if (ad.brokerUsername != null) j.broker_username = ad.brokerUsername;
@@ -247,32 +225,48 @@ export async function hydrateStore(uid) {
 
 // --- persist: SQLite → Firestore (diffed, batched, serialized) ------------------
 
-// Load the signed-in user's tree into the in-memory DB once per instance (the
-// in-memory DB holds one user's data at a time; first authenticated request
-// decides whose). Called from the auth paths in server/index.js.
-let hydratedUid = null;
-export async function ensureHydratedFor(uid) {
-  if (!uid || hydratedUid === uid) return;
-  await hydrateStore(uid);
-  hydratedUid = uid;
+const isIdKey = (id) => /^\d+$/.test(id);
+
+// Load a user's tree into THEIR in-memory DB (db.js userDb) once per DB. Keyed
+// by the DB object, so an LRU-evicted user is transparently rehydrated; the
+// promise is shared so concurrent first requests hydrate only once.
+const hydrations = new WeakMap(); // Database -> Promise
+export function ensureHydratedFor(uid) {
+  if (!uid) return Promise.resolve();
+  return runAsUser(uid, () => {
+    const key = db.valueOf(); // the user's real Database handle (not the proxy)
+    if (!hydrations.has(key)) {
+      hydrations.set(key, hydrateStore(uid).catch((e) => {
+        hydrations.delete(key); // retry on the next request
+        throw e;
+      }));
+    }
+    return hydrations.get(key);
+  });
 }
 
-// Serialize snapshots: writes are synchronous in SQLite but the Firestore flush
-// is async, so overlapping requests queue here instead of interleaving.
-let chain = Promise.resolve();
+// Per-user save queue: writes are synchronous in SQLite but the Firestore flush
+// is async, so one user's overlapping requests queue instead of interleaving.
+// The caller (server/index.js) waits for this before sending the response, so a
+// "saved" reply means it is really in Firestore.
+const chains = new Map(); // uid -> Promise
 export function persistStore(user) {
-  chain = chain
-    .then(() => doPersist(user))
+  const uid = user?.uid;
+  if (!uid) return Promise.resolve();
+  const run = (chains.get(uid) || Promise.resolve())
+    .then(() => runAsUser(uid, () => doPersist(uid)))
     .catch((e) => {
       console.error('[store] persist failed:', e);
-      manifest.clear(); // unknown state → next persist rewrites everything
+      manifests.delete(uid); // unknown state → next persist rewrites everything
+      throw e; // the caller turns this into an error response
     });
-  return chain;
+  chains.set(uid, run.catch(() => {})); // keep the queue alive after a failure
+  return run;
 }
 
-// In-memory change tracker: avoids rewriting unchanged docs on every save. It
+// Per-user change tracker: avoids rewriting unchanged docs on every save. It
 // only lives for the lifetime of this instance; a cold start re-writes all.
-const manifest = new Map(); // fullPath -> content hash
+const manifests = new Map(); // uid -> Map(fullPath -> content hash)
 const hashData = (o) => crypto.createHash('sha1').update(JSON.stringify(o)).digest('hex');
 
 const listIds = async (collectionPath) => {
@@ -284,18 +278,23 @@ const listIds = async (collectionPath) => {
   }
 };
 
-async function doPersist(user) {
-  const uid = user?.uid;
-  if (!uid) return;
+async function doPersist(uid) {
   const root = `users/${uid}`;
+  if (!manifests.has(uid)) manifests.set(uid, new Map());
+  const manifest = manifests.get(uid);
   const desired = new Map(); // fullPath -> data
   const put = (fullPath, data) => desired.set(fullPath, data);
 
-  for (const s of db.prepare('SELECT * FROM sessions').all()) put(`${root}/sessions/${s.token}`, s);
   for (const l of db.prepare('SELECT * FROM library_items').all()) put(`${root}/library/${l.id}`, l);
 
+  // Product/fee settings (editable in Settings) — persisted per-user so the fee
+  // schedule survives instance recycling and follows the user across devices.
+  const prods = {};
+  for (const p of db.prepare('SELECT * FROM products').all()) prods[p.symbol] = { point_value: p.point_value, fee_rt: p.fee_rt };
+  put(`${root}/settings/products`, prods);
+
   for (const j of db.prepare('SELECT * FROM journals').all()) {
-    const acct = `${root}/accounts/${j.name}`;
+    const acct = `${root}/accounts/${j.id}`;
     const stats = statsRisk(j.id);
     const doc = {};
     for (const [k, v] of Object.entries(j)) {
@@ -337,16 +336,18 @@ async function doPersist(user) {
     }
   }
 
-  // Existing docs (ids only) — used to delete what no longer exists.
+  // Existing docs (ids only) — used to delete what no longer exists. Legacy
+  // name-keyed accounts (layout 1) are NEVER deleted here: they stay as a
+  // backup of the pre-migration data (hydrate ignores them once layout = 2).
   const existing = new Map(); // collectionPath -> Set(ids)
-  const accountIds = await listIds(`${root}/accounts`);
+  const accountIds = new Set([...(await listIds(`${root}/accounts`))].filter(isIdKey));
   existing.set(`${root}/accounts`, accountIds);
   for (const sc of ['trades', 'fills', 'payouts', 'manualDays', 'dayLogs']) {
     for (const aid of accountIds) {
       existing.set(`${root}/accounts/${aid}/${sc}`, await listIds(`${root}/accounts/${aid}/${sc}`));
     }
   }
-  existing.set(`${root}/sessions`, await listIds(`${root}/sessions`));
+  existing.set(`${root}/sessions`, await listIds(`${root}/sessions`)); // retired: drain old session docs
   existing.set(`${root}/library`, await listIds(`${root}/library`));
 
   let batch = firestore.batch();
@@ -379,7 +380,12 @@ async function doPersist(user) {
     }
   }
   await flush();
-  console.log(`[store] persisted +${writes} -${deletes} (${desired.size} total docs)`);
+  // Mark the user as migrated only after every id-keyed doc is committed.
+  if (manifest.get(`${root}/settings/storage`) !== 'layout2') {
+    await firestore.doc(`${root}/settings/storage`).set({ layout: 2 }, { merge: true });
+    manifest.set(`${root}/settings/storage`, 'layout2');
+  }
+  console.log(`[store] persisted ${uid}: +${writes} -${deletes} (${desired.size} total docs)`);
 }
 
 // One-time cleanup of the OLD flat `appdata` layout seeded before the hierarchy.

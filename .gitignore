@@ -16,3 +16,6 @@ functions/migrate.secret
 functions/crypto.secret
 functions/bootstrap.sqlite
 functions/screenshots/
+
+# Local backups (may contain credentials)
+backups/
