@@ -149,9 +149,9 @@ PRESETS['custom'] = {
 // Fixed id prefixes firms assign to accounts. When set, the create/pass dialog
 // LOCKS the prefix and the user only types the number the firm gave them:
 //   challenge (eval): Apex "APEX…", Lucid "LFE…"
-//   funded:           Apex "PAAPEX…"   (Lucid funded prefix TBD)
+//   funded:           Apex "PAAPEX…", Lucid "LFF…"
 const CHALLENGE_PREFIX = { Apex: 'APEX', Lucid: 'LFE' };
-const FUNDED_PREFIX = { Apex: 'PAAPEX' };
+const FUNDED_PREFIX = { Apex: 'PAAPEX', Lucid: 'LFF' };
 
 // Locked account-id prefix for a firm + phase ('eval' | 'funded'), or null.
 export function accountPrefix(firm, phase) {

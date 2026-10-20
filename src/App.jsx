@@ -72,7 +72,7 @@ function CreateJournalModal({ onCreated, onClose, blocking, initialPhase }) {
   const set = (k, v) => setR((cur) => ({ ...cur, [k]: v }));
 
   // Firms assign a fixed account-id prefix (Apex eval "APEX…", Lucid eval "LFE…",
-  // Apex funded "PAAPEX…") — lock it and let the user type only the number. Firms
+  // Apex funded "PAAPEX…", Lucid funded "LFF…") — lock it and let the user type only the number. Firms
   // without a known prefix (or Custom) get a plain editable name.
   const prefix = accountPrefix(r.firm, isFunded ? 'funded' : 'eval');
   const finalName = prefix ? `${prefix}${suffix.trim()}` : name.trim();

@@ -2,11 +2,11 @@ import React, { useState } from 'react';
 import { fundedNameDefault, fundedPrefix } from '../presets.js';
 
 // Naming the new funded account after passing an eval. Firms with a fixed id
-// prefix (Apex "PAAPEX<number>", Lucid "LFE<number>") show that prefix LOCKED
+// prefix (Apex "PAAPEX<number>", Lucid "LFF<number>") show that prefix LOCKED
 // (not editable) and the user only types the number the firm assigned. Other
 // firms get a normal editable name.
 export default function PassFundedModal({ firm, evalName, onConfirm, onCancel }) {
-  const prefix = fundedPrefix(firm);                                      // 'PAAPEX' | 'LFE' | null
+  const prefix = fundedPrefix(firm);                                      // 'PAAPEX' | 'LFF' | null
   const [suffix, setSuffix] = useState('');                               // number after the prefix
   const [name, setName] = useState(() => fundedNameDefault(firm, evalName)); // no-prefix firms: editable
 
