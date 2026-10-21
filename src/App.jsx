@@ -14,7 +14,7 @@ import Expenses from './pages/Expenses.jsx';
 import Payouts from './pages/Payouts.jsx';
 import Welcome from './pages/Welcome.jsx';
 import Settings from './pages/Settings.jsx';
-import { api, setActiveJournalId, browserTz } from './api.js';
+import { api, setActiveJournalId, browserTz, subscribeInflight } from './api.js';
 import { PRESETS, accountPrefix } from './presets.js';
 import Dropdown from './components/Dropdown.jsx';
 import UserBar from './components/UserBar.jsx';
@@ -388,6 +388,21 @@ export default function App() {
   const [journals, setJournals] = useState(null);
   const [activeId, setActiveId] = useState(null);
   const [dataVersion, setDataVersion] = useState(0);
+  // Account switch loader: on while the new account's data is still loading
+  // (any API request in flight), shown for at least 350 ms so it never flashes.
+  const [switching, setSwitching] = useState(null); // { name, since } | null
+  useEffect(() => {
+    if (!switching) return;
+    let idle = null;
+    const unsub = subscribeInflight((n) => {
+      clearTimeout(idle);
+      if (n > 0) return;
+      const wait = Math.max(0, 350 - (Date.now() - switching.since));
+      idle = setTimeout(() => setSwitching(null), wait + 120); // + a beat for follow-up requests
+    });
+    const safety = setTimeout(() => setSwitching(null), 20_000);
+    return () => { unsub(); clearTimeout(idle); clearTimeout(safety); };
+  }, [switching]);
   const [showCreate, setShowCreate] = useState(false);
   const [createType, setCreateType] = useState('eval');
   const [showImport, setShowImport] = useState(false);
@@ -497,6 +512,10 @@ export default function App() {
   };
 
   const selectJournal = (id) => {
+    if (id !== activeId) {
+      const j = (journals || []).find((x) => x.id === id) || (viewingArchived?.id === id ? viewingArchived : null);
+      setSwitching({ name: j?.name || '', since: Date.now() });
+    }
     setActiveId(id);
     setActiveJournalId(id);
     localStorage.setItem('activeJournal', String(id));
@@ -566,7 +585,16 @@ export default function App() {
         </div>
         <UserBar onLogout={logout} />
       </aside>
-      <main className="main">
+      <main className="main" style={{ position: 'relative' }}>
+        {switching && (
+          <div className="switch-overlay" role="status" aria-live="polite">
+            <div className="switch-bar" />
+            <div className="switch-card">
+              <div className="switch-spinner" />
+              <div>Switching to <b>{switching.name || 'account'}</b>…</div>
+            </div>
+          </div>
+        )}
         {auth.user && auth.user.emailVerified === false && (
           <div className="auth-inline">
             <span>Verify your email to keep account recovery secure.</span>

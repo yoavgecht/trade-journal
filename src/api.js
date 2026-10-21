@@ -5,7 +5,19 @@ let activeJournal = null;
 export function setActiveJournalId(id) { activeJournal = id; }
 export function getActiveJournalId() { return activeJournal; }
 
+// In-flight request counter — lets the UI show a loader while an account
+// switch is still fetching its data (see App.jsx `switching`).
+let inflight = 0;
+const inflightListeners = new Set();
+const setInflight = (n) => { inflight = n; inflightListeners.forEach((cb) => cb(n)); };
+export function subscribeInflight(cb) { inflightListeners.add(cb); cb(inflight); return () => inflightListeners.delete(cb); }
+
 export async function api(path, opts = {}) {
+  setInflight(inflight + 1);
+  try { return await apiRequest(path, opts); } finally { setInflight(inflight - 1); }
+}
+
+async function apiRequest(path, opts) {
   const apiBase = (import.meta?.env?.VITE_API_URL || '').replace(/\/$/, '');
   let url = `${apiBase || ''}/api${path}`;
   const needsScope = activeJournal && !path.startsWith('/journals') && !path.startsWith('/products');
