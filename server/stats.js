@@ -208,6 +208,12 @@ export function risk(journalId) {
   const lockLevel = mode === 'buffer' ? start + buffer
     : mode === 'target' ? start + target
     : Infinity; // 'never'
+  // LucidFlex funded: requesting a payout moves the MLL straight to the Locked
+  // MLL Balance (start + $100) even if the trail hadn't reached it yet
+  // (support.lucidtrading.com "LucidFlex Drawdown"). From then on the floor is
+  // static, so the breach check uses the real balance (after withdrawals).
+  const lockOnPayout = j.firm === 'Lucid' && j.phase === 'funded' && mode === 'buffer';
+  let payoutLocked = false;
 
   const days = equity(journalId); // ordered daily closes (trading P&L only)
   // Payouts step the account balance DOWN on their date, but they are NOT trading
@@ -232,8 +238,9 @@ export function risk(journalId) {
     if (date in cumByDate) tradingCum = cumByDate[date]; // trading cum through this day
     const tradingBalance = start + tradingCum;
     // Breach is enforced on TRADING equity vs the floor active this session (set
-    // at the prior close). Touch/cross = dead, loss capped at the floor.
-    if (tradingBalance <= threshold) {
+    // at the prior close). Touch/cross = dead, loss capped at the floor. Once a
+    // Lucid payout locked the floor, it's the real balance (net of payouts).
+    if ((payoutLocked ? tradingBalance - paid : tradingBalance) <= threshold) {
       breachedOn = date;
       balance = threshold;
       minDistance = 0;
@@ -244,6 +251,10 @@ export function risk(journalId) {
     peakEOD = Math.max(peakEOD, tradingBalance);
     threshold = Math.max(threshold, Math.min(peakEOD - dd, lockLevel));
     paid += paidByDate[date] || 0;
+    if (lockOnPayout && paid > 0 && !payoutLocked) {
+      payoutLocked = true;
+      threshold = Math.max(threshold, lockLevel);
+    }
     balance = tradingBalance - paid; // plotted balance = trading equity minus withdrawals
     series.push({ date, balance: r2(balance), threshold: r2(threshold), payout: paidByDate[date] || 0 });
     minDistance = Math.min(minDistance, balance - threshold);
